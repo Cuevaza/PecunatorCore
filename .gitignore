@@ -7,5 +7,11 @@ venv/
 pecunator.local.env
 runtime/data/*.enc
 runtime/data/salt.bin
+runtime/data/credential_public.json
+runtime/data/active_credential_id.txt
+runtime/data/rem_device.key
+runtime/data/master_remember.fenc
+runtime/data/documents/*
+!runtime/data/documents/.gitkeep
 .idea/
 .vscode/

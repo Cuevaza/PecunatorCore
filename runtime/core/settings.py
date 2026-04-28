@@ -37,3 +37,35 @@ def binance_credentials_from_env() -> tuple[str, str] | None:
     if key and sec:
         return key, sec
     return None
+
+
+def vault_unlock_password_from_env() -> str | None:
+    """
+    Optional master password (same as vault UI) to decrypt credentials.enc on startup.
+    Prefer env API keys for automation; avoid committing this variable.
+    """
+    raw = os.environ.get("PECUNATOR_VAULT_PASSWORD", "").strip()
+    return raw or None
+
+
+def account_poll_interval_sec() -> float:
+    """
+    REST+polling cadence while the gateway runs (balances, open orders).
+    Defaults to ~1s for low latency; increase if you hit Binance REST rate limits.
+    """
+    raw = os.environ.get("PECUNATOR_ACCOUNT_POLL_SEC", "1").strip()
+    try:
+        v = float(raw)
+    except ValueError:
+        return 1.0
+    return max(0.25, min(v, 300.0))
+
+
+def my_trades_poll_stride() -> int:
+    """How many account poll cycles between myTrades fetches (1 = every cycle). Saves weight vs tickers/orderbook counts."""
+    raw = os.environ.get("PECUNATOR_MY_TRADES_POLL_STRIDE", "1").strip()
+    try:
+        n = int(raw, 10)
+    except ValueError:
+        return 1
+    return max(1, min(n, 1000))

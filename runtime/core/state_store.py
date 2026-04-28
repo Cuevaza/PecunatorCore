@@ -19,6 +19,8 @@ class StateStore:
     balances: List[Dict[str, Any]] = field(default_factory=list)
     open_orders: List[Dict[str, Any]] = field(default_factory=list)
     my_trades: List[Dict[str, Any]] = field(default_factory=list)
+    """REST account summary excluding raw balances row list (commission / flags / etc.)."""
+    account_summary: Dict[str, Any] = field(default_factory=dict)
     last_error: Optional[str] = None
     connected: bool = False
 

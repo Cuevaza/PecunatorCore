@@ -1,373 +1,367 @@
-"""NiceGUI dashboard: compact centered layout, dark theme, no page scroll."""
+"""NiceGUI dashboard: vault (public keys), REST connection, balances & account summary."""
 
 from __future__ import annotations
 
-import os
-import traceback
+import asyncio
 from typing import Any
 
 from nicegui import ui
 
 from runtime.app import AppContext
-from runtime.connectors.binance_gateway import BinanceGateway, normalize_binance_spot_symbol
+from runtime.connectors.binance_gateway import BinanceGateway
+from runtime.core.master_remember import (
+    clear_remembered_master,
+    load_remembered_master,
+    save_remembered_master,
+)
 from runtime.core.security_util import sanitize_log_message
-from runtime.core.settings import binance_credentials_from_env
-from runtime.ui.terminal import run_command
+from runtime.core.settings import (
+    binance_credentials_from_env,
+    vault_unlock_password_from_env,
+)
 
-# Fixed counts so the UI fits common 1080p heights without scrolling.
-_OB_LEVELS = 5
-_BAL_MAX = 8
-_ORD_MAX = 6
-_TRD_MAX = 6
-_RT_PUBLIC = 6
-_TERM_MAX_CHARS = 1600
+_MAIN = ("BTC", "ETH", "BNB", "SOL", "USDT", "USDC", "XRP", "ADA")
 
 
-def _mono_block(lines: list[str]) -> str:
-    if not lines:
-        return "—"
-    return "\n".join(lines)
+def _tot(b: dict[str, Any]) -> float:
+    return float(b.get("free", 0) or 0) + float(b.get("locked", 0) or 0)
+
+
+def _primary(balances: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    pos = [b for b in balances if _tot(b) > 0]
+    by = {b["asset"]: b for b in pos}
+    head = [by[a] for a in _MAIN if a in by]
+    tail = sorted(
+        (x for x in pos if x["asset"] not in _MAIN),
+        key=lambda b: (-_tot(b), b["asset"]),
+    )[:20]
+    out: list[dict[str, Any]] = []
+    for b in head + tail:
+        t = _tot(b)
+        out.append(
+            {
+                "asset": b.get("asset", ""),
+                "free": str(b.get("free", "0")),
+                "locked": str(b.get("locked", "0")),
+                "total": f"{t:.12g}".rstrip("0").rstrip("."),
+            }
+        )
+    return out
+
+
+def _short(pk: str) -> str:
+    s = pk.strip()
+    return s if len(s) <= 24 else f"{s[:14]}…{s[-6:]}"
+
+
+async def _auto_start(ctx: AppContext) -> None:
+    if ctx.auto_connect_attempted:
+        return
+    ctx.auto_connect_attempted = True
+    pair = binance_credentials_from_env()
+    if not pair:
+        mp = ctx.cached_master_password or vault_unlock_password_from_env()
+        if mp and ctx.config.exists():
+            pair = ctx.config.get_pair_for_active(mp)
+            if pair:
+                ctx.cached_master_password = mp
+    if not pair:
+        return
+    ak, sec = pair
+    try:
+        if ctx.gateway:
+            await ctx.gateway.stop()
+        ctx.gateway = BinanceGateway(ak, sec, ctx.bus, ctx.state, ctx.log_line)
+        await ctx.gateway.start()
+        await ctx.gateway.fetch_account()
+        ctx.state.last_error = None
+    except Exception as e:
+        ctx.gateway = None
+        ctx.state.connected = False
+        ctx.state.last_error = sanitize_log_message(str(e))
 
 
 def mount(ctx: AppContext) -> None:
     ui.add_head_html(
-        "<style>html,body{height:100%;margin:0;overflow:hidden!important;}"
-        ".pec-fill{min-height:0;}</style>",
+        "<style>html,body{margin:0;min-height:100%;background:#12151c;color:#e6e6e6}</style>",
         shared=True,
     )
 
     @ui.page("/", title="PecunatorCore", dark=True)
-    def page() -> None:
-        _dr = os.environ.get("PECUNATOR_DARK", "1").strip().lower()
-        if _dr in ("0", "false", "no", "off", "light"):
-            ui.dark_mode().disable()
-        elif _dr in ("auto",):
-            ui.dark_mode().auto()
-        else:
-            ui.dark_mode().enable()
+    async def page() -> None:
+        ui.dark_mode().enable()
+        remembered = load_remembered_master(ctx.config.data_dir)
+        if remembered:
+            ctx.cached_master_password = remembered
 
-        def strip_term(s: str) -> str:
-            if len(s) <= _TERM_MAX_CHARS:
-                return s
-            return "…\n" + s[-(_TERM_MAX_CHARS - 2) :]
+        rf: dict[str, Any] = {}
 
-        setup_status_ref: dict[str, Any] = {}
+        def sync_sel() -> None:
+            sel = rf.get("sel")
+            if not sel:
+                return
+            pubs = ctx.config.list_public_credentials()
+            m = {p["id"]: _short(p["public_key"]) for p in pubs}
+            sel.options = m
+            if m:
+                cur = ctx.config.get_active_credential_id()
+                pick = cur if cur in m else next(iter(m))
+                sel.value = pick
+                ctx.config.set_active_credential_id(str(pick))
+            else:
+                sel.value = None
+                ctx.config.set_active_credential_id(None)
 
-        with ui.dialog() as vault_dialog, ui.card().classes("w-full max-w-sm"):
-            ui.label("Erase vault?").classes("text-weight-bold")
-            ui.label("Deletes credentials.enc and salt.bin.").classes("text-caption")
+        def fill_public(col: ui.column) -> None:
+            col.clear()
+            with col:
+                pubs = ctx.config.list_public_credentials()
+                if not pubs:
+                    ui.label("No credentials stored.").classes("text-caption text-grey-6")
+                    return
 
-            async def wipe_vault() -> None:
+                async def drop(cid: str) -> None:
+                    mi = rf.get("mp")
+                    mp = (mi.value or "").strip() if mi else ""
+                    mp = mp or (ctx.cached_master_password or "").strip()
+                    if not mp:
+                        ui.notify("Enter master password in Vault first.", type="warning")
+                        return
+                    if ctx.gateway:
+                        await ctx.gateway.stop()
+                        ctx.gateway = None
+                        ctx.state.connected = False
+                    if ctx.config.remove_credential(cid, mp):
+                        sync_sel()
+                        fill_public(col)
+                        ui.notify("Removed.", type="positive")
+                    else:
+                        ui.notify("Delete failed.", type="negative")
+
+                for p in pubs:
+                    cid = p["id"]
+                    pub = p["public_key"]
+                    with ui.row().classes("w-full items-center gap-sm py-xs border-b border-grey-9"):
+                        ui.label(pub).classes("grow text-caption break-all")
+                        ui.button(
+                            icon="delete",
+                            on_click=lambda c=cid: asyncio.create_task(drop(c)),
+                        ).props("dense flat color=warning")
+
+        wipe = ui.dialog()
+        add = ui.dialog()
+        vault = ui.dialog()
+
+        with wipe, ui.card().classes("w-full max-w-sm"):
+            ui.label("Erase entire vault?").classes("text-subtitle1")
+
+            async def do_wipe() -> None:
                 if ctx.gateway:
                     await ctx.gateway.stop()
                     ctx.gateway = None
                     ctx.state.connected = False
                 ctx.config.clear_credentials()
-                vault_dialog.close()
-                lbl = setup_status_ref.get("setup")
-                if lbl is not None:
-                    lbl.set_text("Vault removed.")
-                ui.notify("Deleted", type="info")
+                clear_remembered_master(ctx.config.data_dir)
+                ctx.cached_master_password = None
+                wipe.close()
+                ph = rf.get("ph")
+                if ph:
+                    fill_public(ph)
+                sync_sel()
+                ui.notify("Vault cleared.", type="warning")
 
-            with ui.row().classes("q-gutter-sm"):
-                ui.button("Cancel", on_click=vault_dialog.close)
-                ui.button("Erase", on_click=wipe_vault, color="negative")
+            with ui.row().classes("gap-sm justify-end"):
+                ui.button("Cancel", on_click=wipe.close).props("flat dense")
+                ui.button("Erase", color="negative", on_click=lambda: asyncio.create_task(do_wipe())).props(
+                    "dense"
+                )
 
-        with ui.dialog() as setup_dialog, ui.card().classes("w-full max-w-lg"):
-            ui.label("Setup & security").classes("text-h6")
-            ui.markdown(
-                "- Bind: `PECUNATOR_HOST` / `PORT` (default loopback).\n"
-                "- Never share API keys. Prefer **encrypted vault** over env vars.\n"
-                "- **REST**: official `binance-connector` · **streams**: asyncio WebSockets."
-            ).classes("text-caption")
+        with add, ui.card().classes("w-full max-w-md"):
+            ui.label("Add Binance credential").classes("text-h6")
+            inp_ak = ui.input("Public API key").props("dense outlined").classes("w-full")
+            inp_sk = ui.input("Secret key", password=True).props("dense outlined").classes("w-full")
 
-            master_pwd = (
-                ui.input("Master password (>=12 chars to save)", password=True)
-                .props("outlined dense")
-                .classes("w-full")
-            )
-            api_key = ui.input("API Key").props("outlined dense").classes("w-full")
-            api_secret = (
-                ui.input("Secret Key", password=True).props("outlined dense").classes("w-full")
-            )
-            setup_status = ui.label("Unlock or save credentials.").classes("text-caption")
-            setup_status_ref["setup"] = setup_status
-
-            async def do_test() -> None:
-                ak = api_key.value
-                sec = api_secret.value
-                if not ak or not sec:
-                    ui.notify("Need API key + secret", type="warning")
+            async def save_pair() -> None:
+                mi = rf.get("mp")
+                mp = (mi.value or "").strip() if mi else ""
+                mp = mp or (ctx.cached_master_password or "").strip()
+                ak = (inp_ak.value or "").strip()
+                sk = (inp_sk.value or "").strip()
+                if len(mp) < 12:
+                    ui.notify("Master password (≥12 chars) required.", type="warning")
+                    return
+                if len(ak) < 16 or len(sk) < 16:
+                    ui.notify("API key / secret look incomplete.", type="warning")
                     return
                 try:
-                    g = BinanceGateway(ak.strip(), sec.strip(), ctx.bus, ctx.state, ctx.log_line)
-                    await g.test_connection()
-                    setup_status.set_text("REST OK (binance-connector Spot.account).")
-                    ui.notify("OK", type="positive")
-                except Exception as e:
-                    setup_status.set_text(f"Test failed: {sanitize_log_message(str(e))}")
-                    ui.notify("Failed", type="negative")
-
-            async def do_save() -> None:
-                mp = master_pwd.value or ""
-                if not mp:
-                    ui.notify("Master password required", type="warning")
-                    return
-                ak = api_key.value
-                sec = api_secret.value
-                if not ak or not sec:
-                    ui.notify("Keys required", type="warning")
-                    return
-                try:
-                    ctx.config.save_credentials(ak.strip(), sec.strip(), mp)
-                    api_key.value = ""
-                    api_secret.value = ""
-                    setup_status.set_text("Saved (encrypted).")
-                    ui.notify("Saved", type="positive")
+                    ctx.config.add_credential(ak, sk, mp)
+                    ctx.cached_master_password = mp
+                    rb = rf.get("rb")
+                    if rb and rb.value:
+                        save_remembered_master(ctx.config.data_dir, mp)
                 except ValueError as e:
-                    setup_status.set_text(str(e))
                     ui.notify(str(e), type="warning")
-                except Exception as e:
-                    setup_status.set_text(sanitize_log_message(str(e)))
-                    ui.notify("Save failed", type="negative")
-
-            async def do_start() -> None:
-                mp = master_pwd.value or ""
-                if not mp:
-                    ui.notify("Master password required", type="warning")
                     return
-                creds = ctx.config.load_credentials(mp)
-                if not creds:
-                    ui.notify("Decrypt failed", type="negative")
-                    return
-                ak, sec = creds
-                if ctx.gateway:
-                    await ctx.gateway.stop()
-                ctx.gateway = BinanceGateway(ak, sec, ctx.bus, ctx.state, ctx.log_line)
-                try:
-                    await ctx.gateway.start()
-                    setup_status.set_text("Runtime online.")
-                    ui.notify("Started", type="positive")
-                except Exception as e:
-                    ctx.gateway = None
-                    setup_status.set_text(sanitize_log_message(str(e)))
-                    ui.notify("Start failed", type="negative")
+                inp_ak.value = ""
+                inp_sk.value = ""
+                add.close()
+                ph = rf.get("ph")
+                if ph:
+                    fill_public(ph)
+                sync_sel()
+                ui.notify("Saved.", type="positive")
 
-            async def do_start_env() -> None:
-                creds = binance_credentials_from_env()
-                if not creds:
-                    ui.notify("Set PECUNATOR_BINANCE_API_KEY / _SECRET", type="warning")
-                    return
-                ak, sec = creds
-                if ctx.gateway:
-                    await ctx.gateway.stop()
-                ctx.gateway = BinanceGateway(ak, sec, ctx.bus, ctx.state, ctx.log_line)
-                try:
-                    await ctx.gateway.start()
-                    setup_status.set_text("Online (env keys).")
-                    ui.notify("Started", type="positive")
-                except Exception as e:
-                    ctx.gateway = None
-                    setup_status.set_text(sanitize_log_message(str(e)))
-                    ui.notify("Failed", type="negative")
+            with ui.row().classes("justify-end gap-sm"):
+                ui.button("Cancel", on_click=add.close).props("dense flat")
+                ui.button("Save credential", color="primary", on_click=save_pair).props("dense")
 
-            async def do_stop() -> None:
+        with vault, ui.card().classes("w-full max-w-2xl"):
+            ui.markdown("##### Vault · public keys only")
+            rf["mp"] = inp_mp = ui.input(
+                label="Master password",
+                password=True,
+                value=remembered or "",
+            ).props("dense outlined").classes("w-full")
+            rf["rb"] = cb_rm = ui.checkbox(
+                "Remember master password locally (encrypted blob)",
+                value=bool(remembered),
+            )
+
+            def on_chk() -> None:
+                s = (inp_mp.value or "").strip()
+                if cb_rm.value:
+                    if len(s) >= 12:
+                        save_remembered_master(ctx.config.data_dir, s)
+                        ctx.cached_master_password = s
+                else:
+                    clear_remembered_master(ctx.config.data_dir)
+
+            cb_rm.on_value_change(lambda _: on_chk())
+
+            pubs0 = ctx.config.list_public_credentials()
+            opt_map = {x["id"]: _short(x["public_key"]) for x in pubs0}
+            av0 = ctx.config.get_active_credential_id()
+            v0 = av0 if av0 and av0 in opt_map else (next(iter(opt_map)) if opt_map else None)
+            rf["sel"] = sel_pick = ui.select(
+                opt_map,
+                label="Active credential",
+                value=v0,
+            ).props("dense outlined emit-value maps-options").classes("w-full")
+
+            def sel_upd(_evt: dict[str, Any]) -> None:
+                v = sel_pick.value
+                if v:
+                    ctx.config.set_active_credential_id(str(v))
+
+            sel_pick.on_value_change(sel_upd)
+
+            ph_col = ui.column().classes("w-full pec-public-slot mb-sm mt-sm").style(
+                "max-height:220px;overflow:auto;border:1px solid #2a3344;border-radius:6px;"
+            )
+            rf["ph"] = ph_col
+            fill_public(ph_col)
+
+            with ui.row().classes("gap-sm flex-wrap mt-sm"):
+                ui.button(
+                    icon="add",
+                    label="New credential…",
+                    on_click=add.open,
+                    color="primary",
+                ).props("dense outline")
+                ui.button(
+                    icon="delete_forever",
+                    label="Erase vault",
+                    color="warning",
+                    on_click=wipe.open,
+                ).props("dense outline")
+            ui.button("Close", on_click=vault.close).props("flat dense")
+
+        tbl_acc = ui.table(
+            columns=[
+                {"name": "k", "label": "Field", "field": "k"},
+                {"name": "v", "label": "", "field": "v"},
+            ],
+            rows=[],
+        ).props("dense flat bordered")
+
+        tbl_bal = ui.table(
+            columns=[
+                {"name": "asset", "label": "Asset", "field": "asset"},
+                {"name": "free", "label": "Free", "field": "free"},
+                {"name": "locked", "label": "Locked", "field": "locked"},
+                {"name": "total", "label": "Total", "field": "total"},
+            ],
+            rows=[],
+            row_key="asset",
+        ).props("dense flat bordered")
+
+        conn_lbl = ui.label("REST: OFF · WS idle").classes("text-subtitle2 text-grey-5")
+        ui.separator().classes("my-md")
+
+        with ui.row().classes("items-center gap-md mb-md"):
+            ui.label("REST + WebSocket gateway").classes("text-h5 text-bold grow")
+
+            async def toggle() -> None:
                 if ctx.gateway:
                     await ctx.gateway.stop()
                     ctx.gateway = None
                     ctx.state.connected = False
-                    setup_status.set_text("Stopped.")
-                    ui.notify("Stopped", type="info")
+                    ui.notify("Stopped.", type="info")
+                    return
+                blob = binance_credentials_from_env()
+                if blob is None:
+                    mp_in = inp_mp.value if inp_mp.value else ""
+                    mp_in = (mp_in or "").strip() or (ctx.cached_master_password or "").strip()
+                    if not mp_in:
+                        ui.notify("Open Vault — enter master password.", type="warning")
+                        vault.open()
+                        return
+                    blob = ctx.config.get_pair_for_active(mp_in)
+                    ctx.cached_master_password = mp_in
+                if not blob:
+                    ui.notify("No keys.", type="warning")
+                    vault.open()
+                    return
+                ak_, sec_ = blob
+                try:
+                    ctx.gateway = BinanceGateway(ak_, sec_, ctx.bus, ctx.state, ctx.log_line)
+                    await ctx.gateway.start()
+                    await ctx.gateway.fetch_account()
+                    ctx.state.last_error = None
+                    ui.notify("REST online.", type="positive")
+                except Exception as ex:
+                    ctx.gateway = None
+                    ui.notify(sanitize_log_message(str(ex)), type="negative")
 
-            with ui.row().classes("flex-wrap q-gutter-xs"):
-                ui.button("Test", on_click=do_test).props("dense")
-                ui.button("Save", on_click=do_save).props("dense")
-                ui.button("Start", on_click=do_start, color="primary").props("dense")
-                ui.button("Env start", on_click=do_start_env).props("dense")
-                ui.button("Stop", on_click=do_stop).props("dense flat")
-                ui.button("Erase vault…", on_click=vault_dialog.open, color="warning").props(
-                    "dense flat"
-                )
+            ui.button("Connection toggle", icon="bolt", on_click=toggle).props(
+                "dense rounded-borders"
+            ).classes("px-md")
+            ui.button("Vault…", icon="vpn_key", on_click=vault.open).props("dense flat rounded-borders")
 
-            ui.button("Close", on_click=setup_dialog.close).props("dense flat")
+        async def reload_balances() -> None:
+            if ctx.gateway:
+                await ctx.gateway.fetch_account()
 
-        with ui.column().classes(
-            "w-full h-screen overflow-hidden items-center pec-fill bg-grey-10 q-pa-sm"
-        ):
-            with ui.column().classes(
-                "w-full max-w-6xl h-full max-h-full overflow-hidden pec-fill flex flex-col q-gutter-xs"
-            ):
-                with ui.row().classes("w-full shrink-0 items-center justify-between no-wrap"):
-                    ui.label("PecunatorCore · Binance Spot").classes(
-                        "text-subtitle1 text-weight-bold text-grey-1"
-                    )
-                    with ui.row().classes("items-center q-gutter-xs shrink-0"):
-                        conn_lbl = ui.label("WS: —").classes("text-caption text-grey-4")
-                        ui.button(icon="settings", on_click=setup_dialog.open).props(
-                            "flat round dense"
-                        ).tooltip("Credentials & control")
+        ui.button("Refresh REST snapshot", icon="refresh", on_click=reload_balances).props("dense outline mb-md")
 
-                status_line = ui.label().classes("text-caption text-grey-4 shrink-0 truncate w-full")
+        def repaint() -> None:
+            gw = ctx.gateway is not None
+            conn_lbl.set_text(
+                f"REST: {'ON' if gw else 'OFF'} · WS: {'streaming' if ctx.state.connected else 'idle'}",
+            )
+            s = ctx.state.account_summary or {}
+            tbl_acc.rows = [
+                {"k": "accountType", "v": str(s.get("accountType", "—"))},
+                {"k": "canTrade", "v": "yes" if s.get("canTrade") else ("no" if gw else "—")},
+                {"k": "canWithdraw", "v": "yes" if s.get("canWithdraw") else ("no" if gw else "—")},
+                {"k": "canDeposit", "v": "yes" if s.get("canDeposit") else ("no" if gw else "—")},
+                {"k": "makerCommission", "v": str(s.get("makerCommission", "—"))},
+                {"k": "takerCommission", "v": str(s.get("takerCommission", "—"))},
+                {"k": "updateTime", "v": str(s.get("updateTime", "—"))},
+            ]
+            tbl_bal.rows = _primary(ctx.state.balances)
 
-                with ui.row().classes("w-full flex-1 min-h-0 pec-fill no-wrap q-gutter-sm"):
-                    with ui.column().classes(
-                        "flex-1 min-w-0 min-h-0 pec-fill overflow-hidden q-gutter-xs"
-                    ):
-                        ui.label("Market").classes("text-caption text-weight-bold text-grey-3 shrink-0")
-                        with ui.row().classes("items-center q-gutter-xs shrink-0"):
-                            sym_input = ui.input(placeholder="Symbol").props("dense outlined dark").classes(
-                                "grow"
-                            )
-                            sym_input.value = ctx.state.selected_symbol
+        ui.timer(0.4, repaint)
 
-                            async def apply_symbol() -> None:
-                                if not ctx.gateway:
-                                    ui.notify("Start runtime from Setup first", type="warning")
-                                    return
-                                try:
-                                    s = normalize_binance_spot_symbol(sym_input.value or "")
-                                except ValueError:
-                                    ui.notify("Invalid symbol", type="negative")
-                                    return
-                                ctx.state.selected_symbol = s
-                                try:
-                                    await ctx.gateway.restart_market_stream()
-                                    ui.notify(s, type="positive")
-                                except Exception as e:
-                                    ui.notify(sanitize_log_message(str(e)), type="negative")
+        await _auto_start(ctx)
 
-                            ui.button("Apply", on_click=apply_symbol).props("dense unelevated color=primary")
-
-                        price_lbl = ui.label("Last —").classes("text-h6 text-amber-5 shrink-0")
-                        spread_lbl = ui.label("Spread —").classes("text-caption text-grey-3 shrink-0")
-
-                        ob_lbl = ui.label().classes(
-                            "text-caption text-grey-2 pec-fill overflow-hidden"
-                        ).style(
-                            "font-family: ui-monospace, monospace; font-size: 11px; white-space: pre;"
-                            "line-height: 1.15; max-height: 9rem;"
-                        )
-
-                        ui.label("Trades").classes("text-caption text-weight-bold text-grey-3 shrink-0")
-                        trades_lbl = ui.label().classes("text-caption text-grey-2 shrink-0").style(
-                            "font-family: ui-monospace, monospace; font-size: 11px; white-space: pre;"
-                            "line-height: 1.15; max-height: 3.6rem;"
-                        )
-
-                    with ui.column().classes(
-                        "flex-1 min-w-0 min-h-0 pec-fill overflow-hidden q-gutter-xs"
-                    ):
-                        ui.label("Account").classes("text-caption text-weight-bold text-grey-3 shrink-0")
-                        bal_lbl = ui.label().classes("text-caption text-grey-2 pec-fill overflow-hidden").style(
-                            "font-family: ui-monospace, monospace; font-size: 11px; white-space: pre;"
-                            "line-height: 1.15; max-height: 7rem;"
-                        )
-                        oo_lbl = ui.label().classes("text-caption text-grey-2 pec-fill overflow-hidden").style(
-                            "font-family: ui-monospace, monospace; font-size: 11px; white-space: pre;"
-                            "line-height: 1.15; max-height: 5rem;"
-                        )
-                        mt_lbl = ui.label().classes("text-caption text-grey-2 pec-fill overflow-hidden").style(
-                            "font-family: ui-monospace, monospace; font-size: 11px; white-space: pre;"
-                            "line-height: 1.15; max-height: 5rem;"
-                        )
-
-                ui.label("Console").classes("text-caption text-weight-bold text-grey-3 shrink-0")
-                term_out = (
-                    ui.textarea()
-                    .props("readonly filled dark dense")
-                    .classes("w-full shrink-0 text-grey-2")
-                    .style(
-                        "height: 5.5rem; max-height: 5.5rem; overflow: hidden; "
-                        "font-family: ui-monospace, monospace; font-size: 11px;"
-                    )
-                )
-                with ui.row().classes("w-full shrink-0 items-center q-gutter-xs no-wrap"):
-                    cmd_in = (
-                        ui.input(placeholder="balances · orderbook · price BTCUSDT …")
-                        .props("dense outlined dark")
-                        .classes("flex-1 min-w-0")
-                    )
-
-                    async def send_cmd() -> None:
-                        line = (cmd_in.value or "").strip()
-                        if not line:
-                            return
-                        cmd_in.value = ""
-                        block = (term_out.value or "") + f"\n> {line}\n"
-                        try:
-                            out = await run_command(line, ctx.terminal_ctx)
-                        except Exception:
-                            out = traceback.format_exc()
-                        term_out.value = strip_term(block + out + "\n")
-
-                    ui.button("Run", on_click=send_cmd).props("dense color=primary unelevated")
-
-                async def on_enter(_: Any) -> None:
-                    await send_cmd()
-
-                cmd_in.on("keydown.enter", on_enter)
-
-                def refresh() -> None:
-                    base = "Online" if ctx.gateway else "Offline"
-                    err = (ctx.state.last_error or "").strip()
-                    if err:
-                        status_line.set_text(f"{base} · {sanitize_log_message(err)[:96]}")
-                    else:
-                        status_line.set_text(base)
-
-                    t = ctx.state.ticker
-                    if t and t.get("b") and t.get("a"):
-                        try:
-                            sp_tick = float(t["a"]) - float(t["b"])
-                        except (TypeError, ValueError):
-                            sp_tick = None
-                        price_lbl.set_text(f'Last {t.get("c", "—")}')
-                        spread_lbl.set_text(
-                            f"Spread {sp_tick:.8f}" if sp_tick is not None else "Spread —"
-                        )
-                    else:
-                        price_lbl.set_text("Last —")
-                        spread_lbl.set_text("Spread —")
-
-                    sp = ctx.state.spread()
-                    if sp is not None:
-                        spread_lbl.set_text(f"Spread(book) {sp:.8f}")
-
-                    conn_lbl.set_text(f"WS: {'on' if ctx.state.connected else 'off'}")
-
-                    bids = (ctx.state.orderbook.get("bids") or [])[:_OB_LEVELS]
-                    asks = (ctx.state.orderbook.get("asks") or [])[:_OB_LEVELS]
-                    ob_lines = ["ASKS"]
-                    for p, q in reversed(asks):
-                        ob_lines.append(f"{p:>12} {q}")
-                    ob_lines.append("BIDS")
-                    for p, q in bids:
-                        ob_lines.append(f"{p:>12} {q}")
-                    ob_lbl.set_text(_mono_block(ob_lines))
-
-                    rt = list(ctx.state.recent_trades)[:_RT_PUBLIC]
-                    trades_lbl.set_text(
-                        _mono_block([f'{x.get("p", "")} x {x.get("q", "")}' for x in rt])
-                    )
-
-                    rows = [
-                        f'{b.get("asset", "?"):>5} {b.get("free", 0):>12} {b.get("locked", 0):>12}'
-                        for b in ctx.state.balances[:_BAL_MAX]
-                    ]
-                    bal_lbl.set_text(_mono_block(rows))
-
-                    oor = []
-                    for o in ctx.state.open_orders[:_ORD_MAX]:
-                        oor.append(
-                            f'{o.get("symbol", "")} {o.get("side", "")} '
-                            f'{o.get("origQty", "")} @ {o.get("price", "")}'
-                        )
-                    oo_lbl.set_text(_mono_block(oor))
-
-                    mtr = []
-                    for x in ctx.state.my_trades[-_TRD_MAX:]:
-                        side = "B" if x.get("isBuyer") else "S"
-                        mtr.append(f'{side} {x.get("qty", "")} @ {x.get("price", "")}')
-                    mt_lbl.set_text(_mono_block(mtr))
-
-                ui.timer(0.35, refresh)

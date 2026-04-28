@@ -26,6 +26,9 @@ class AppContext:
     config: ConfigManager
     gateway: Optional[BinanceGateway] = None
     logs: Deque[str] = field(default_factory=lambda: deque(maxlen=500))
+    auto_connect_attempted: bool = False
+    """Last successful master password in process memory after unlock (volatile)."""
+    cached_master_password: Optional[str] = None
 
     def log_line(self, msg: str) -> None:
         self.logs.append(msg)
