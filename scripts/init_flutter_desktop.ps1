@@ -17,6 +17,7 @@ $pubspec = Join-Path $shell 'pubspec.yaml'
 if (Test-Path $pubspec) {
     Write-Host "desktop_shell already initialized (pubspec.yaml exists)." -ForegroundColor Green
     Set-Location $shell
+    flutter create . --platforms=windows,linux,macos --project-name pecunator_desktop --description "Pecunator desktop shell"
     flutter pub get
     exit 0
 }
