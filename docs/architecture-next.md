@@ -57,6 +57,8 @@ flowchart LR
 
 Operational reference (Spanish): [`binance-api-and-compliance.md`](binance-api-and-compliance.md). Update when Binance changes REST/WebSocket policies or Pecunator polling defaults (`PECUNATOR_ACCOUNT_POLL_SEC`, etc.).
 
+Dated `exchangeInfo.rateLimits` JSON snapshots: [`binance-limits-snapshots/`](binance-limits-snapshots/). REST weight header (`X-MBX-USED-WEIGHT-1M`) is surfaced in `GET /api/v1/gateway/snapshot` and in Flutter; the standalone console tool lives under `exampleJV/monitorPesos/`.
+
 ## Renaming `runtime` → `engine`
 
 Optional follow-up once API and imports are stabilized.

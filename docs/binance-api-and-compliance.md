@@ -7,6 +7,13 @@ Documento de **consulta** para PecunatorCore. Los límites y políticas **cambia
 | **Última revisión** | 2026-04-29 |
 | **Próxima revisión sugerida** | Tras cada actualización mayor del motor o del FAQ de Binance |
 
+### Snapshots históricos (`exchangeInfo.rateLimits`)
+
+Capturas fechadas del endpoint público Spot (solo `rateLimits` + metadatos) para **análisis histórico**:
+
+- Carpeta: [`binance-limits-snapshots/`](binance-limits-snapshots/)
+- Script: [`scripts/fetch_binance_exchange_info_limits.py`](../scripts/fetch_binance_exchange_info_limits.py)
+
 ---
 
 ## 1. Fuentes oficiales (mantener enlaces actualizados)
@@ -92,5 +99,6 @@ Según el documento de streams en el repositorio público de Binance (comprueba 
 | Fecha | Cambio |
 |-------|--------|
 | 2026-04-29 | Creación: enlaces oficiales, conceptos REST/WS/WAF, relación con PecunatorCore. |
+| 2026-04-29 | Snapshots `exchangeInfo.rateLimits` en `docs/binance-limits-snapshots/`; motor/UI peso REST. |
 
 *Para actualizar: edita la tabla del §6 y la fecha de “Última revisión” arriba.*

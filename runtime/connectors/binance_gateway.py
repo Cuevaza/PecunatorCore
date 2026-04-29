@@ -54,6 +54,25 @@ class BinanceGateway:
         self._poll_cycle = 0
         self._logged_account_rest_snapshot = False
 
+    def _capture_rest_weight_from_client(self) -> None:
+        """Read X-MBX-USED-WEIGHT-1M from python-binance last response (same as exampleJV/monitorPesos)."""
+        if self._client is None:
+            return
+        try:
+            resp = getattr(self._client, "response", None)
+            if resp is None:
+                return
+            headers = getattr(resp, "headers", None) or {}
+            raw = None
+            for k, v in headers.items():
+                if str(k).upper() == "X-MBX-USED-WEIGHT-1M":
+                    raw = v
+                    break
+            if raw is not None:
+                self.state.api_weight_used_1m = int(float(raw))
+        except (TypeError, ValueError, AttributeError):
+            pass
+
     def _emit_log(self, msg: str) -> None:
         self._log(msg)
         self.bus.publish(LOG_TOPIC, msg)
@@ -115,6 +134,7 @@ class BinanceGateway:
         ]
         self.bus.publish("account.balances", self.state.balances)
         self.state.last_error = None
+        self._capture_rest_weight_from_client()
 
         _msg = (
             "GET /api/v3/account: "
@@ -173,6 +193,7 @@ class BinanceGateway:
         self.state.open_orders = orders
         self.bus.publish("account.open_orders", self.state.open_orders)
         self.state.last_error = None
+        self._capture_rest_weight_from_client()
 
     async def fetch_my_trades(self, symbol: str, limit: int = 20) -> None:
         if self._client is None:
@@ -197,6 +218,7 @@ class BinanceGateway:
         self.state.my_trades = list(reversed(raw if isinstance(raw, list) else []))
         self.bus.publish("account.my_trades", self.state.my_trades)
         self.state.last_error = None
+        self._capture_rest_weight_from_client()
 
     async def fetch_book_ticker(self, symbol: str) -> Optional[Dict[str, Any]]:
         if self._client is None:

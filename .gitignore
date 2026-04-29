@@ -19,4 +19,8 @@ runtime/data/documents/*
 # exampleJV: track scripts/templates; keep real keys local-only
 exampleJV/config.py
 exampleJV/.env
+exampleJV/monitorPesos/config.py
+exampleJV/monitorPesos/.git/
+exampleJV/monitorPesos/*.csv
+exampleJV/monitorPesos/.idea/
 Dorothy7.0/

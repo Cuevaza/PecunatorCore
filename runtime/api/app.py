@@ -42,6 +42,7 @@ from runtime.core.master_remember import load_remembered_master, save_remembered
 from runtime.core.security_util import sanitize_log_message
 from runtime.core.settings import (
     api_bind_host_for_cors_regex,
+    api_weight_limit_1m_display,
     binance_credentials_from_env,
     remember_master_password_enabled,
     vault_unlock_password_from_env,
@@ -563,6 +564,8 @@ def _snapshot(ctx: AppContext) -> GatewaySnapshotOut:
         balances_total_assets_in_response=int(getattr(ctx.state, "balances_total_assets_in_response", 0) or 0),
         ws_connected=bool(ctx.state.connected),
         selected_symbol=ctx.state.selected_symbol,
+        used_weight_1m=getattr(ctx.state, "api_weight_used_1m", None),
+        weight_limit_1m=api_weight_limit_1m_display(),
     )
 
 

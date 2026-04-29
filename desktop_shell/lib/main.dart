@@ -81,6 +81,8 @@ class _BotControlPageState extends State<BotControlPage> {
   String _lastError = '-';
   bool _gatewayRunning = false;
   bool _gatewayWsConnected = false;
+  int? _apiWeightUsed;
+  int _apiWeightLimit = 6000;
   String _activeCredential = 'none · -';
   String _activeCredentialId = '';
   List<Map<String, dynamic>> _hubBots = <Map<String, dynamic>>[];
@@ -258,9 +260,26 @@ class _BotControlPageState extends State<BotControlPage> {
       final snap = await _api.gatewaySnapshot();
       _gatewayRunning = snap['gateway_running'] == true;
       _gatewayWsConnected = snap['ws_connected'] == true;
+      final uw = snap['used_weight_1m'];
+      if (uw is int) {
+        _apiWeightUsed = uw;
+      } else if (uw is num) {
+        _apiWeightUsed = uw.toInt();
+      } else {
+        _apiWeightUsed = int.tryParse('$uw');
+      }
+      final wl = snap['weight_limit_1m'];
+      if (wl is int) {
+        _apiWeightLimit = wl;
+      } else if (wl is num) {
+        _apiWeightLimit = wl.toInt();
+      } else {
+        _apiWeightLimit = int.tryParse('$wl') ?? 6000;
+      }
     } catch (_) {
       _gatewayRunning = false;
       _gatewayWsConnected = false;
+      _apiWeightUsed = null;
     }
   }
 
@@ -1109,6 +1128,38 @@ class _BotControlPageState extends State<BotControlPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (_loading) const LinearProgressIndicator(),
+            if (_gatewayRunning &&
+                _apiWeightUsed != null &&
+                _apiWeightLimit > 0)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Tooltip(
+                  message:
+                      'Misma métrica que exampleJV/monitorPesos (X-MBX-USED-WEIGHT-1M). '
+                      'Límite de referencia: variable PECUNATOR_API_WEIGHT_LIMIT_1M en el motor.',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Peso REST (1m): $_apiWeightUsed / $_apiWeightLimit',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          minHeight: 6,
+                          value: (_apiWeightUsed!.clamp(0, _apiWeightLimit)) /
+                              _apiWeightLimit,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             Text(
               'API activa: $_activeCredential',
               style: TextStyle(

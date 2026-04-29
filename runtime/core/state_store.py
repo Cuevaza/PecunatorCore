@@ -16,15 +16,17 @@ class StateStore:
         default_factory=lambda: {"bids": [], "asks": []}
     )
     recent_trades: Deque[Dict[str, Any]] = field(default_factory=lambda: deque(maxlen=50))
+    # Spot /api/v3/account total balance rows Binance returned (before non-zero filter).
     balances: List[Dict[str, Any]] = field(default_factory=list)
-    """Spot /api/v3/account total balance rows Binance returned (before non-zero filter)."""
     balances_total_assets_in_response: int = 0
     open_orders: List[Dict[str, Any]] = field(default_factory=list)
     my_trades: List[Dict[str, Any]] = field(default_factory=list)
-    """REST account summary excluding raw balances row list (commission / flags / etc.)."""
+    # REST account summary excluding raw balances row list (commission / flags / etc.).
     account_summary: Dict[str, Any] = field(default_factory=dict)
     last_error: Optional[str] = None
     connected: bool = False
+    # Last X-MBX-USED-WEIGHT-1M from python-binance after a REST call (IP-scoped).
+    api_weight_used_1m: Optional[int] = None
 
     def reset_market(self) -> None:
         self.ticker = {}

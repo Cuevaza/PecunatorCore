@@ -74,6 +74,18 @@ def account_poll_interval_sec() -> float:
     return max(0.25, min(v, 300.0))
 
 
+def api_weight_limit_1m_display() -> int:
+    """
+    Denominator for UI / monitorPesos-style occupancy (default matches Spot exchangeInfo).
+    Override if Binance changes your tier or you use a different product.
+    """
+    raw = os.environ.get("PECUNATOR_API_WEIGHT_LIMIT_1M", "6000").strip()
+    try:
+        return max(1, int(raw, 10))
+    except ValueError:
+        return 6000
+
+
 def my_trades_poll_stride() -> int:
     """How many account poll cycles between myTrades fetches (1 = every cycle). Saves weight vs tickers/orderbook counts."""
     raw = os.environ.get("PECUNATOR_MY_TRADES_POLL_STRIDE", "1").strip()

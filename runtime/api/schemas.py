@@ -56,6 +56,14 @@ class GatewaySnapshotOut(BaseModel):
     balances_total_assets_in_response: int
     ws_connected: bool
     selected_symbol: str
+    used_weight_1m: Optional[int] = Field(
+        default=None,
+        description="X-MBX-USED-WEIGHT-1M from last REST response (shared per IP)",
+    )
+    weight_limit_1m: int = Field(
+        default=6000,
+        description="Display cap; default from PECUNATOR_API_WEIGHT_LIMIT_1M or 6000",
+    )
 
 
 class BotConfigBody(BaseModel):

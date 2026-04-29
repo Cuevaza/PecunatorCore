@@ -23,7 +23,7 @@ Más detalle: [`docs/architecture-next.md`](docs/architecture-next.md).
 
 ## Motor Python (HTTP API)
 
-Por defecto **`python main.py`** levanta la API en **http://127.0.0.1:8765** (ajusta con `PECUNATOR_API_HOST` / `PECUNATOR_API_PORT`).
+Por defecto **`python main.py`** levanta la API en **http://127.0.0.1:8765** (ajusta con `PECUNATOR_API_HOST` / `PECUNATOR_API_PORT`). Opcional: **`PECUNATOR_API_WEIGHT_LIMIT_1M`** (por defecto `6000`) alinea la barra de “peso REST” en la UI con el límite de referencia de `exchangeInfo`.
 
 - OpenAPI: http://127.0.0.1:8765/docs  
 - Solo stub de log (sin servidor): `PECUNATOR_ENGINE_STUB=1 python main.py`
@@ -73,4 +73,5 @@ Legacy single-bot endpoints remain available under `/api/v1/bot/*` for compatibi
 
 - [`docs/architecture-next.md`](docs/architecture-next.md) — arquitectura Flutter + motor  
 - [`docs/binance-api-and-compliance.md`](docs/binance-api-and-compliance.md) — límites Binance REST/WebSocket y checklist  
+- [`docs/binance-limits-snapshots/`](docs/binance-limits-snapshots/) — snapshots fechados de `exchangeInfo.rateLimits`  
 - [`docs/git-cursor-github.md`](docs/git-cursor-github.md) — Git / Cursor / GitHub  

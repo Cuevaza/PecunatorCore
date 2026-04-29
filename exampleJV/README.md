@@ -27,3 +27,10 @@ La UI Flutter sigue usando el cofre o env según `runtime/core/settings.py`; est
 ## Referencias de API Binance
 
 Ver [`docs/binance-api-and-compliance.md`](../docs/binance-api-and-compliance.md).
+
+## monitorPesos (peso REST / “barra de ocupación”)
+
+Módulo en [`monitorPesos/`](monitorPesos/): script de consola + CSV que muestrea `X-MBX-USED-WEIGHT-1M` (misma métrica que el **gateway** expone a Flutter). La “grafiquita” histórica es la **barra de caracteres en terminal**, no un PNG. La UI desktop muestra una **barra de progreso** equivalente cuando el gateway está activo.
+
+- Documentación: [`monitorPesos/README.md`](monitorPesos/README.md)
+- Escala del 100%: `MONITOR_PESOS_WEIGHT_TOTAL` o `PECUNATOR_API_WEIGHT_LIMIT_1M` (por defecto 6000, alineado con Spot `exchangeInfo`).
