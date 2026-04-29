@@ -15,6 +15,23 @@ def data_dir() -> Path:
     return _DEFAULT_RUNTIME_DIR.resolve()
 
 
+def api_bind_host() -> str:
+    """HTTP API bind address (loopback by default)."""
+    return os.environ.get("PECUNATOR_API_HOST", "127.0.0.1").strip() or "127.0.0.1"
+
+
+def api_bind_port() -> int:
+    try:
+        return int(os.environ.get("PECUNATOR_API_PORT", "8765"))
+    except ValueError:
+        return 8765
+
+
+def api_bind_host_for_cors_regex() -> str:
+    """Origins allowed for CORS (Flutter / local dev)."""
+    return r"https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+
+
 def binance_credentials_from_env() -> tuple[str, str] | None:
     """
     Optional non-interactive bootstrap. Keys live in the process environment only.

@@ -17,11 +17,14 @@ Pecunator Core is a modular, high-integrity engine for real-time trading systems
 
 Más detalle: [`docs/architecture-next.md`](docs/architecture-next.md).
 
-## Motor Python (backend)
+## Motor Python (HTTP API)
 
-- `python main.py` arranca solo logging (stub); la capa HTTP para Flutter **aún no está implementada**.
-- Conectores Binance, cofre cifrado y estado viven bajo `runtime/`.
+Por defecto **`python main.py`** levanta la API en **http://127.0.0.1:8765** (ajusta con `PECUNATOR_API_HOST` / `PECUNATOR_API_PORT`).
 
+- OpenAPI: http://127.0.0.1:8765/docs  
+- Solo stub de log (sin servidor): `PECUNATOR_ENGINE_STUB=1 python main.py`
+
+Conectores Binance, cofre y estado: `runtime/` (ver `runtime/api/`).
 ## Git
 
 [`docs/git-cursor-github.md`](docs/git-cursor-github.md)

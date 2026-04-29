@@ -1,4 +1,4 @@
-"""CLI entry: logging only. No web server."""
+"""CLI entry: optional HTTP API (FastAPI + Uvicorn) for the Flutter shell."""
 
 from __future__ import annotations
 
@@ -25,10 +25,26 @@ def _configure_logging() -> None:
 
 def main() -> None:
     _configure_logging()
-    log = logging.getLogger("pecunator.engine")
-    log.info(
-        "PecunatorCore Python engine (no HTTP UI). Flutter desktop shell: scaffold with "
-        "scripts/init_flutter_desktop.ps1; HTTP API layer not implemented yet.",
+    lo = logging.getLogger("pecunator.engine")
+    if os.environ.get("PECUNATOR_ENGINE_STUB", "").strip().lower() in ("1", "true", "yes"):
+        lo.info(
+            "PECUNATOR_ENGINE_STUB set: engine exits without HTTP API. "
+            "Unset to start the API (default host 127.0.0.1:8765).",
+        )
+        return
+    import uvicorn
+
+    from runtime.api.app import create_app
+    from runtime.core.settings import api_bind_host, api_bind_port
+
+    host = api_bind_host()
+    port = api_bind_port()
+    lo.info("Starting engine HTTP API at http://%s:%s (docs /docs)", host, port)
+    uvicorn.run(
+        create_app(),
+        host=host,
+        port=port,
+        log_level=os.environ.get("UVICORN_LOG_LEVEL", "info").lower(),
     )
 
 

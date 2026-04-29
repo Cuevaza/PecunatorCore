@@ -4,7 +4,7 @@ Human coordination in Spanish (`README` policy); technical identifiers and code 
 
 ## Current state
 
-- Python package `runtime/`: **no web UI**. Connectors (`BinanceGateway`), vault (`ConfigManager`), and `AppContext` remain for a future HTTP/WebSocket API consumed by Flutter.
+- Python package `runtime/`: FastAPI HTTP API under `runtime/api/` (default `127.0.0.1:8765`), plus `BinanceGateway`, vault, and `AppContext` for Flutter.
 
 ## Target layout
 
@@ -49,7 +49,7 @@ flowchart LR
 |-------|--------|
 | 0 | Web stack removed; Flutter + engine API is the plan. |
 | 1 | Flutter SDK; `scripts/init_flutter_desktop.ps1` → `desktop_shell/`. |
-| 2 | Add FastAPI/Uvicorn facade wrapping existing gateways. |
+| 2 | ✅ FastAPI facade in `runtime/api/`; next: wire Flutter `http` client. |
 | 3 | Implement Flutter screens against the API. |
 
 ## Renaming `runtime` → `engine`
