@@ -1,4 +1,4 @@
-"""Single entrypoint: logging + NiceGUI bootstrap (dashboard and gateway lifecycle)."""
+"""CLI entry: logging only. No web server."""
 
 from __future__ import annotations
 
@@ -25,10 +25,11 @@ def _configure_logging() -> None:
 
 def main() -> None:
     _configure_logging()
-    logging.getLogger("pecunator").info("starting PecunatorCore (%s)", __name__)
-    from runtime.app import main as run_dashboard  # noqa: PLC0415
-
-    run_dashboard()
+    log = logging.getLogger("pecunator.engine")
+    log.info(
+        "PecunatorCore Python engine (no HTTP UI). Flutter desktop shell: scaffold with "
+        "scripts/init_flutter_desktop.ps1; HTTP API layer not implemented yet.",
+    )
 
 
 if __name__ == "__main__":

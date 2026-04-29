@@ -1,4 +1,4 @@
-"""Map Binance `get_account` payload to dashboard-friendly general account summary (no balances)."""
+"""Map Binance `get_account` payload to a compact account summary (no balances)."""
 
 from __future__ import annotations
 

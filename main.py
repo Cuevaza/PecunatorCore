@@ -1,4 +1,4 @@
-"""Run the PecunatorCore UI and Binance REST/WebSocket gateway (see runtime/main.py)."""
+"""Run the PecunatorCore Python engine stub (logging); Flutter is the UI shell."""
 
 from __future__ import annotations
 

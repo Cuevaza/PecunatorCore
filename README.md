@@ -1,6 +1,6 @@
 # PecunatorCore
 
-Pecunator Core is a modular, high-integrity engine for real-time trading systems. It provides atomic data handling, multi-exchange orchestration, and low-latency state management, forming a resilient foundation for automation, strategy execution, and financial computation.
+Pecunator Core is a modular, high-integrity engine for real-time trading systems: Python **engine** (`runtime/`) plus a **Flutter desktop** shell (generated under `desktop_shell/`). There is **no web dashboard** in this repo.
 
 ## Directiva de trabajo
 
@@ -9,10 +9,19 @@ Pecunator Core is a modular, high-integrity engine for real-time trading systems
 | Este IDE, conversación y coordinación entre nosotros | **Español latino**, por defecto |
 | Código fuente, nombres de símbolos, comentarios en código, mensajes de commit orientados al repositorio, y demás artefactos de implementación | **Inglés** |
 
-Esta tabla es la norma de referencia para el proyecto: comunicación humana en español latino; producto técnico y código en inglés.
+## Flutter desktop (UI)
 
-## Nueva arquitectura (Flutter desktop)
+1. Instalar [Flutter SDK (Windows)](https://docs.flutter.dev/get-started/install/windows).
+2. En la raíz del repo: `powershell -ExecutionPolicy Bypass -File scripts/init_flutter_desktop.ps1`
+3. Abrir `desktop_shell/` en el IDE Flutter y ejecutar (p. ej. `flutter run -d windows`).
 
-- Diseño objetivo y fases de migración: [`docs/architecture-next.md`](docs/architecture-next.md).
-- Git + Cursor/GitHub en Windows: [`docs/git-cursor-github.md`](docs/git-cursor-github.md).
-- Tras instalar Flutter: `powershell -ExecutionPolicy Bypass -File scripts/init_flutter_desktop.ps1` (genera `desktop_shell/`).
+Más detalle: [`docs/architecture-next.md`](docs/architecture-next.md).
+
+## Motor Python (backend)
+
+- `python main.py` arranca solo logging (stub); la capa HTTP para Flutter **aún no está implementada**.
+- Conectores Binance, cofre cifrado y estado viven bajo `runtime/`.
+
+## Git
+
+[`docs/git-cursor-github.md`](docs/git-cursor-github.md)

@@ -15,3 +15,4 @@ runtime/data/documents/*
 !runtime/data/documents/.gitkeep
 .idea/
 .vscode/
+exampleJV/masterLexar.txt

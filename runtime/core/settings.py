@@ -15,18 +15,6 @@ def data_dir() -> Path:
     return _DEFAULT_RUNTIME_DIR.resolve()
 
 
-def http_host() -> str:
-    """Bind address for NiceGUI. Default loopback; set PECUNATOR_HOST only if you accept LAN exposure."""
-    return os.environ.get("PECUNATOR_HOST", "127.0.0.1").strip() or "127.0.0.1"
-
-
-def http_port() -> int:
-    try:
-        return int(os.environ.get("PECUNATOR_PORT", "8080"))
-    except ValueError:
-        return 8080
-
-
 def binance_credentials_from_env() -> tuple[str, str] | None:
     """
     Optional non-interactive bootstrap. Keys live in the process environment only.
@@ -41,8 +29,7 @@ def binance_credentials_from_env() -> tuple[str, str] | None:
 
 def vault_unlock_password_from_env() -> str | None:
     """
-    Optional master password (same as vault UI) to decrypt credentials.enc on startup.
-    Prefer env API keys for automation; avoid committing this variable.
+    Optional master password to decrypt credentials.enc (Flutter will send via API later; env for automation).
     """
     raw = os.environ.get("PECUNATOR_VAULT_PASSWORD", "").strip()
     return raw or None

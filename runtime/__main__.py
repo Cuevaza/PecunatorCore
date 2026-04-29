@@ -1,4 +1,4 @@
-"""Allow `python -m runtime` alongside `python -m runtime.app` / `python main.py`."""
+"""Allow `python -m runtime` (engine stub; no HTTP server)."""
 
 from __future__ import annotations
 
