@@ -18,6 +18,8 @@ class PecunatorDesktopApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blueGrey),
       ),
+      darkTheme: ThemeData.dark(useMaterial3: true),
+      themeMode: ThemeMode.dark,
       home: const BotControlPage(),
     );
   }
@@ -31,7 +33,8 @@ class BotControlPage extends StatefulWidget {
 }
 
 class _BotControlPageState extends State<BotControlPage> {
-  final _apiBaseCtrl = TextEditingController(text: 'http://127.0.0.1:8765');
+  static const _engineBase = 'http://127.0.0.1:8765';
+
   final _masterCtrl = TextEditingController();
   final _symbolCtrl = TextEditingController(text: 'XRPUSDT');
   final _loopCtrl = TextEditingController(text: '450');
@@ -40,18 +43,21 @@ class _BotControlPageState extends State<BotControlPage> {
   final _dropCtrl = TextEditingController(text: '0.004');
   final _qtyDecCtrl = TextEditingController(text: '8');
   final _priceDecCtrl = TextEditingController(text: '4');
+  final _terminalCtrl = TextEditingController(text: 'bot run_once');
 
   bool _simulated = true;
   bool _tradingEnabled = false;
   bool _loading = false;
+  bool _terminalBusy = false;
 
   String _health = '-';
   String _vaultStatus = '-';
   String _botStatus = '-';
   String _gatewayStatus = '-';
   String _lastError = '-';
+  String _terminalOut = '';
 
-  EngineApi get _api => EngineApi(_apiBaseCtrl.text.trim());
+  EngineApi get _api => EngineApi(_engineBase);
 
   @override
   void initState() {
@@ -61,7 +67,6 @@ class _BotControlPageState extends State<BotControlPage> {
 
   @override
   void dispose() {
-    _apiBaseCtrl.dispose();
     _masterCtrl.dispose();
     _symbolCtrl.dispose();
     _loopCtrl.dispose();
@@ -70,6 +75,7 @@ class _BotControlPageState extends State<BotControlPage> {
     _dropCtrl.dispose();
     _qtyDecCtrl.dispose();
     _priceDecCtrl.dispose();
+    _terminalCtrl.dispose();
     super.dispose();
   }
 
@@ -116,6 +122,30 @@ class _BotControlPageState extends State<BotControlPage> {
     });
   }
 
+  Future<void> _terminalExec() async {
+    final command = _terminalCtrl.text.trim();
+    if (command.isEmpty || _terminalBusy) return;
+    setState(() => _terminalBusy = true);
+    try {
+      final res = await _api.terminalExecute(
+        command: command,
+        masterPassword: _masterCtrl.text.trim().isEmpty ? null : _masterCtrl.text.trim(),
+      );
+      final output = (res['output'] ?? '').toString();
+      final prev = _terminalOut.isEmpty ? '' : '$_terminalOut\n\n';
+      setState(() {
+        _terminalOut = '$prev> $command\n$output';
+      });
+    } catch (e) {
+      final prev = _terminalOut.isEmpty ? '' : '$_terminalOut\n\n';
+      setState(() {
+        _terminalOut = '$prev> $command\nERROR: $e';
+      });
+    } finally {
+      if (mounted) setState(() => _terminalBusy = false);
+    }
+  }
+
   Future<void> _unlockVault() async {
     await _withBusy(() async {
       await _api.unlockVault(_masterCtrl.text.trim());
@@ -146,6 +176,18 @@ class _BotControlPageState extends State<BotControlPage> {
         masterPassword: _masterCtrl.text.trim().isEmpty ? null : _masterCtrl.text.trim(),
       );
       await _refreshAll();
+    });
+  }
+
+  Future<void> _syncTimestamp() async {
+    await _withBusy(() async {
+      final res = await _api.syncTimestamp(
+        masterPassword: _masterCtrl.text.trim().isEmpty ? null : _masterCtrl.text.trim(),
+      );
+      final out =
+          'time sync: source=${res['source']} local=${res['local_time_ms']} server=${res['server_time_ms']} offset_ms=${res['offset_ms']}';
+      final prev = _terminalOut.isEmpty ? '' : '$_terminalOut\n\n';
+      _terminalOut = '$prev> time sync\n$out';
     });
   }
 
@@ -217,23 +259,9 @@ class _BotControlPageState extends State<BotControlPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _apiBaseCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Engine API base URL',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: _loading ? null : _refreshAll,
-                  child: const Text('Connect'),
-                ),
-              ],
+            const Text(
+              'Engine connection is local/internal and fixed. No browser dashboard, no URL input in UI.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
             const SizedBox(height: 12),
             Row(
@@ -371,6 +399,10 @@ class _BotControlPageState extends State<BotControlPage> {
                   onPressed: _loading ? null : _runOnce,
                   child: const Text('Run once'),
                 ),
+                ElevatedButton(
+                  onPressed: _loading ? null : _syncTimestamp,
+                  child: const Text('Sync timestamp'),
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -379,6 +411,57 @@ class _BotControlPageState extends State<BotControlPage> {
             _kv('Vault status', _vaultStatus),
             _kv('Gateway snapshot', _gatewayStatus),
             _kv('Bot status', _botStatus),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Terminal (API in situ)',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _terminalCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Command',
+                              hintText: 'bot run_once | bot start | gateway start | account | price BTCUSDT',
+                              border: OutlineInputBorder(),
+                            ),
+                            onSubmitted: (_) => _terminalExec(),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: _terminalBusy ? null : _terminalExec,
+                          child: const Text('Execute'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      width: double.infinity,
+                      constraints: const BoxConstraints(minHeight: 120, maxHeight: 260),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white24),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: SingleChildScrollView(
+                        child: SelectableText(
+                          _terminalOut.isEmpty ? '(no output yet)' : _terminalOut,
+                          style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
             _kv('Last error', _lastError),
           ],
         ),

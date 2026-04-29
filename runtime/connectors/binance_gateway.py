@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 import websockets
@@ -132,6 +133,28 @@ class BinanceGateway:
             self._logged_account_rest_snapshot = True
         else:
             _LOG.debug("%s", _msg)
+
+    async def sync_time(self) -> Dict[str, Any]:
+        if self._client is None:
+            raise RuntimeError("Gateway client not started")
+        data = await self._to_thread(lambda: self._client.get_server_time())
+        server_ms = int(data.get("serverTime", 0) or 0)
+        local_ms = int(time.time() * 1000)
+        offset_ms = server_ms - local_ms
+        try:
+            self._client.timestamp_offset = offset_ms
+        except Exception:
+            pass
+        msg = (
+            f"time sync: local={local_ms} server={server_ms} offset_ms={offset_ms}"
+        )
+        self._emit_log(msg)
+        return {
+            "local_time_ms": local_ms,
+            "server_time_ms": server_ms,
+            "offset_ms": offset_ms,
+            "source": "gateway",
+        }
 
     async def fetch_open_orders(self) -> None:
         if self._client is None:

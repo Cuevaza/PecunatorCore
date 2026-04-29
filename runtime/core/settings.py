@@ -52,6 +52,15 @@ def vault_unlock_password_from_env() -> str | None:
     return raw or None
 
 
+def remember_master_password_enabled() -> bool:
+    """
+    Persist last successful master password in encrypted, device-bound local storage.
+    Defaults to enabled for local development convenience.
+    """
+    raw = os.environ.get("PECUNATOR_REMEMBER_MASTER", "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
 def account_poll_interval_sec() -> float:
     """
     REST+polling cadence while the gateway runs (balances, open orders).

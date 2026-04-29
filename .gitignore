@@ -16,3 +16,4 @@ runtime/data/documents/*
 .idea/
 .vscode/
 exampleJV/masterLexar.txt
+exampleJV/config.py

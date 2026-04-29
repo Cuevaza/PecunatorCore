@@ -68,3 +68,32 @@ class BotStatusOut(BaseModel):
     last_cycle_ts: Optional[str]
     last_error: Optional[str]
     last_report: dict[str, Any]
+
+
+class TerminalExecBody(BaseModel):
+    command: str = Field(min_length=1, max_length=512)
+    master_password: Optional[str] = Field(
+        default=None,
+        description="Optional one-shot vault password for commands that need credentials",
+    )
+
+
+class TerminalExecOut(BaseModel):
+    ok: bool
+    command: str
+    output: str
+
+
+class TimeSyncBody(BaseModel):
+    master_password: Optional[str] = Field(
+        default=None,
+        description="Optional one-shot vault password for syncing timestamp",
+    )
+
+
+class TimeSyncOut(BaseModel):
+    ok: bool
+    source: str
+    local_time_ms: int
+    server_time_ms: int
+    offset_ms: int

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import time
 from dataclasses import asdict, dataclass
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Callable, Optional
@@ -209,6 +210,24 @@ class DorothyRunner:
         report["filled_buy_price"] = str(buy_price)
         report["placed_sell_price"] = str(sell_price)
         return report
+
+    async def sync_time(self) -> dict[str, Any]:
+        client = self._ensure_client()
+        data = await self._to_thread(lambda: client.get_server_time())
+        server_ms = int(data.get("serverTime", 0) or 0)
+        local_ms = int(time.time() * 1000)
+        offset_ms = server_ms - local_ms
+        try:
+            client.timestamp_offset = offset_ms
+        except Exception:
+            pass
+        self._log(f"bot:time_sync offset_ms={offset_ms}")
+        return {
+            "local_time_ms": local_ms,
+            "server_time_ms": server_ms,
+            "offset_ms": offset_ms,
+            "source": "bot",
+        }
 
     async def _loop(self) -> None:
         while not self._stop.is_set():

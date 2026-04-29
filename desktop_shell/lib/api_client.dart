@@ -108,6 +108,32 @@ class EngineApi {
     return _jsonMap(r.body);
   }
 
+  Future<Map<String, dynamic>> terminalExecute({
+    required String command,
+    String? masterPassword,
+  }) async {
+    final r = await http.post(
+      _u('/api/v1/terminal/execute'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'command': command,
+        'master_password': masterPassword,
+      }),
+    );
+    _ensure(r);
+    return _jsonMap(r.body);
+  }
+
+  Future<Map<String, dynamic>> syncTimestamp({String? masterPassword}) async {
+    final r = await http.post(
+      _u('/api/v1/time/sync'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'master_password': masterPassword}),
+    );
+    _ensure(r);
+    return _jsonMap(r.body);
+  }
+
   void _ensure(http.Response r) {
     if (r.statusCode >= 200 && r.statusCode < 300) return;
     final body = r.body.isNotEmpty ? r.body : 'HTTP ${r.statusCode}';

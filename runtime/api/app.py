@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from typing import Any
 
+from binance.client import Client
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -16,15 +19,21 @@ from runtime.api.schemas import (
     BotStatusOut,
     GatewaySnapshotOut,
     GatewayStartBody,
+    TerminalExecBody,
+    TerminalExecOut,
+    TimeSyncBody,
+    TimeSyncOut,
     VaultSessionBody,
     VaultStatusOut,
 )
 from runtime.app import AppContext
 from runtime.connectors.binance_gateway import BinanceGateway
+from runtime.core.master_remember import load_remembered_master, save_remembered_master
 from runtime.core.security_util import sanitize_log_message
 from runtime.core.settings import (
     api_bind_host_for_cors_regex,
     binance_credentials_from_env,
+    remember_master_password_enabled,
     vault_unlock_password_from_env,
 )
 
@@ -39,11 +48,16 @@ def _mask_pk(pk: str) -> str:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     deps.init_context()
+    ctx = deps.get_ctx()
     mp = vault_unlock_password_from_env()
     if mp:
-        ctx = deps.get_ctx()
         ctx.cached_master_password = mp
         _LOG.info("Cached master password loaded from PECUNATOR_VAULT_PASSWORD env")
+    elif remember_master_password_enabled():
+        remembered = load_remembered_master(ctx.config.data_dir)
+        if remembered:
+            ctx.cached_master_password = remembered
+            _LOG.info("Cached master password loaded from device remember store")
     yield
     ctx = deps.peek_ctx()
     bot = deps.get_bot()
@@ -136,6 +150,22 @@ def create_app() -> FastAPI:
     async def bot_status() -> Any:
         return BotStatusOut(**deps.get_bot().status_payload())
 
+    @app.post("/api/v1/terminal/execute", response_model=TerminalExecOut)
+    async def terminal_execute(
+        body: TerminalExecBody,
+        ctx: AppContext = Depends(deps.get_ctx),
+    ) -> Any:
+        output = await _execute_terminal_command(ctx, body.command, body.master_password)
+        return TerminalExecOut(ok=True, command=body.command, output=output)
+
+    @app.post("/api/v1/time/sync", response_model=TimeSyncOut)
+    async def time_sync(
+        body: TimeSyncBody = TimeSyncBody(),
+        ctx: AppContext = Depends(deps.get_ctx),
+    ) -> Any:
+        payload = await _sync_binance_time(ctx, body.master_password)
+        return TimeSyncOut(ok=True, **payload)
+
     @app.post("/api/v1/vault/session")
     async def vault_session(body: VaultSessionBody, ctx: AppContext = Depends(deps.get_ctx)) -> dict[str, bool]:
         if not ctx.config.exists():
@@ -147,6 +177,8 @@ def create_app() -> FastAPI:
         if not pair:
             raise HTTPException(status_code=401, detail="Vault empty or invalid password")
         ctx.cached_master_password = body.master_password
+        if remember_master_password_enabled():
+            save_remembered_master(ctx.config.data_dir, body.master_password)
         return {"unlocked": True}
 
     @app.delete("/api/v1/vault/session")
@@ -169,6 +201,7 @@ def create_app() -> FastAPI:
         gw = BinanceGateway(ak, sec, ctx.bus, ctx.state, ctx.log_line)
         try:
             await gw.start()
+            await gw.sync_time()
             await gw.fetch_account()
         except Exception as e:
             try:
@@ -192,6 +225,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="No API credentials available")
         svc.runner.set_credentials(pair[0], pair[1])
         try:
+            await svc.runner.sync_time()
             await svc.runner.start()
         except Exception as e:
             raise HTTPException(status_code=502, detail=sanitize_log_message(str(e))) from None
@@ -214,6 +248,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="No API credentials available")
         svc.runner.set_credentials(pair[0], pair[1])
         try:
+            await svc.runner.sync_time()
             rep = await svc.runner.run_once()
             svc.mark_run_once(rep, error=None)
         except Exception as e:
@@ -270,4 +305,262 @@ def _resolve_pair(ctx: AppContext, master_password: str | None) -> tuple[str, st
         raise HTTPException(status_code=401, detail=str(e)) from None
     if pair:
         ctx.cached_master_password = mp
+        if remember_master_password_enabled():
+            save_remembered_master(ctx.config.data_dir, mp)
     return pair
+
+
+async def _execute_terminal_command(
+    ctx: AppContext,
+    command: str,
+    master_password: str | None,
+) -> str:
+    cmd = " ".join((command or "").strip().split())
+    if not cmd:
+        return ""
+    parts = cmd.split()
+    key = parts[0].lower()
+    rest = parts[1:]
+    bot = deps.get_bot()
+
+    if key in ("help", "?"):
+        return (
+            "Commands:\n"
+            "  help\n"
+            "  health\n"
+            "  time sync [master]\n"
+            "  vault status\n"
+            "  vault unlock <master>\n"
+            "  gateway start|stop|snapshot|fetch [master]\n"
+            "  bot status|start|stop|run_once [master]\n"
+            "  account\n"
+            "  balances\n"
+            "  open_orders\n"
+            "  my_trades [SYMBOL]\n"
+            "  price SYMBOL"
+        )
+
+    if key == "health":
+        return "ok"
+
+    if key == "time":
+        if not rest or rest[0].lower() != "sync":
+            return "usage: time sync [master]"
+        mp = (rest[1] if len(rest) > 1 else None) or master_password
+        payload = await _sync_binance_time(ctx, mp)
+        return (
+            f"time synced ({payload['source']}): local={payload['local_time_ms']} "
+            f"server={payload['server_time_ms']} offset_ms={payload['offset_ms']}"
+        )
+
+    if key == "vault":
+        if not rest:
+            return "usage: vault status | vault unlock <master>"
+        sub = rest[0].lower()
+        if sub == "status":
+            pubs = ctx.config.list_public_credentials()
+            return (
+                f"vault_exists={ctx.config.exists()} rows={len(pubs)} "
+                f"active={ctx.config.get_active_credential_id() or '-'} "
+                f"session_cached={bool(ctx.cached_master_password)}"
+            )
+        if sub == "unlock":
+            mp = " ".join(rest[1:]).strip() if len(rest) > 1 else (master_password or "").strip()
+            if not mp:
+                return "master password required"
+            try:
+                pair = ctx.config.get_pair_for_active(mp)
+            except ValueError as e:
+                return sanitize_log_message(str(e))
+            if not pair:
+                return "vault unlocked but no active credential"
+            ctx.cached_master_password = mp
+            return "vault unlocked"
+        return "usage: vault status | vault unlock <master>"
+
+    if key == "gateway":
+        if not rest:
+            return "usage: gateway start|stop|snapshot|fetch [master]"
+        sub = rest[0].lower()
+        if sub == "start":
+            mp = (rest[1] if len(rest) > 1 else None) or master_password
+            pair = _resolve_pair(ctx, mp)
+            if not pair:
+                return "no credentials available"
+            if ctx.gateway:
+                await ctx.gateway.stop()
+                ctx.gateway = None
+            gw = BinanceGateway(pair[0], pair[1], ctx.bus, ctx.state, ctx.log_line)
+            try:
+                await gw.start()
+                await gw.sync_time()
+                await gw.fetch_account()
+            except Exception as e:
+                try:
+                    await gw.stop()
+                except Exception:
+                    pass
+                return sanitize_log_message(str(e))
+            ctx.gateway = gw
+            return "gateway started"
+        if sub == "stop":
+            if ctx.gateway:
+                await ctx.gateway.stop()
+                ctx.gateway = None
+            return "gateway stopped"
+        if sub == "snapshot":
+            s = _snapshot(ctx)
+            return (
+                f"running={s.gateway_running} ws={s.ws_connected} "
+                f"balances={len(s.balances)} last_error={s.last_error or '-'}"
+            )
+        if sub == "fetch":
+            if not ctx.gateway:
+                return "gateway not running"
+            await ctx.gateway.fetch_account()
+            return f"account refreshed; balances={len(ctx.state.balances)}"
+        return "usage: gateway start|stop|snapshot|fetch [master]"
+
+    if key == "bot":
+        if not rest:
+            return "usage: bot status|start|stop|run_once [master]"
+        sub = rest[0].lower()
+        if sub == "status":
+            st = bot.status_payload()
+            return (
+                f"running={st['running']} simulated={st['simulated']} "
+                f"trading_enabled={st['trading_enabled']} symbol={st['symbol']}"
+            )
+        if sub in ("start", "run_once"):
+            mp = (rest[1] if len(rest) > 1 else None) or master_password
+            pair = _resolve_pair(ctx, mp)
+            if not pair:
+                return "no credentials available"
+            bot.runner.set_credentials(pair[0], pair[1])
+            try:
+                if sub == "start":
+                    await bot.runner.sync_time()
+                    await bot.runner.start()
+                    return "bot loop started"
+                await bot.runner.sync_time()
+                rep = await bot.runner.run_once()
+                bot.mark_run_once(rep, error=None)
+                return f"run_once: {rep.get('decision', '-')}"
+            except Exception as e:
+                msg = sanitize_log_message(str(e))
+                bot.mark_run_once({}, error=msg)
+                return msg
+        if sub == "stop":
+            await bot.runner.stop()
+            return "bot loop stopped"
+        return "usage: bot status|start|stop|run_once [master]"
+
+    if key == "account":
+        if not ctx.gateway:
+            return "gateway not running"
+        await ctx.gateway.fetch_account()
+        s = ctx.state.account_summary or {}
+        return (
+            f"accountType={s.get('accountType', '-')} "
+            f"canTrade={s.get('canTrade', '-')} "
+            f"balances_non_zero={len(ctx.state.balances)}"
+        )
+
+    if key == "balances":
+        if not ctx.gateway:
+            return "gateway not running"
+        await ctx.gateway.fetch_account()
+        if not ctx.state.balances:
+            return "(empty)"
+        lines = [
+            f"{b.get('asset','?'):6} free={b.get('free','0'):>14} locked={b.get('locked','0'):>14}"
+            for b in ctx.state.balances
+        ]
+        return "\n".join(lines)
+
+    if key == "open_orders":
+        if not ctx.gateway:
+            return "gateway not running"
+        await ctx.gateway.fetch_open_orders()
+        ods = ctx.state.open_orders
+        if not ods:
+            return "(no open orders)"
+        return "\n".join(
+            f"{o.get('symbol')} {o.get('side')} {o.get('type')} qty={o.get('origQty')} price={o.get('price')}"
+            for o in ods
+        )
+
+    if key == "my_trades":
+        if not ctx.gateway:
+            return "gateway not running"
+        sym = rest[0] if rest else ctx.state.selected_symbol
+        try:
+            await ctx.gateway.fetch_my_trades(sym)
+        except Exception as e:
+            return sanitize_log_message(str(e))
+        mts = ctx.state.my_trades
+        if not mts:
+            return "(no trades)"
+        lines = [
+            f"{t.get('time')} {'BUY' if t.get('isBuyer') else 'SELL'} qty={t.get('qty')} price={t.get('price')}"
+            for t in mts[-20:]
+        ]
+        return "\n".join(lines)
+
+    if key == "price":
+        if len(rest) < 1:
+            return "usage: price SYMBOL"
+        if not ctx.gateway:
+            return "gateway not running"
+        bk = await ctx.gateway.fetch_book_ticker(rest[0])
+        if not bk:
+            return "could not fetch bookTicker"
+        return f"{rest[0].upper()} bid={bk.get('bidPrice')} ask={bk.get('askPrice')}"
+
+    return f"unknown command: {key}. type 'help'."
+
+
+async def _sync_binance_time(ctx: AppContext, master_password: str | None) -> dict[str, Any]:
+    bot = deps.get_bot()
+    if ctx.gateway:
+        payload = await ctx.gateway.sync_time()
+        if bot.runner.running:
+            try:
+                await bot.runner.sync_time()
+            except Exception:
+                pass
+        return payload
+
+    pair = _resolve_pair(ctx, master_password)
+    if not pair:
+        raise HTTPException(status_code=400, detail="No API credentials available")
+
+    client = Client(pair[0], pair[1], requests_params={"timeout": 10})
+    try:
+        data = await asyncio.to_thread(client.get_server_time)
+        server_ms = int(data.get("serverTime", 0) or 0)
+        local_ms = int(time.time() * 1000)
+        offset_ms = server_ms - local_ms
+        try:
+            client.timestamp_offset = offset_ms
+        except Exception:
+            pass
+        if bot.runner.running:
+            try:
+                await bot.runner.sync_time()
+            except Exception:
+                pass
+        return {
+            "source": "one_shot",
+            "local_time_ms": local_ms,
+            "server_time_ms": server_ms,
+            "offset_ms": offset_ms,
+        }
+    except Exception as e:
+        msg = sanitize_log_message(str(e))
+        raise HTTPException(status_code=502, detail=msg) from None
+    finally:
+        try:
+            await asyncio.to_thread(client.close_connection)
+        except Exception:
+            pass
