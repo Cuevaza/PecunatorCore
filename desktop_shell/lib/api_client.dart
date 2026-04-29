@@ -134,6 +134,70 @@ class EngineApi {
     return _jsonMap(r.body);
   }
 
+  Future<Map<String, dynamic>> hubBots() async {
+    final r = await http.get(_u('/api/v1/hub/bots'));
+    _ensure(r);
+    return _jsonMap(r.body);
+  }
+
+  Future<Map<String, dynamic>> hubCreateBot(Map<String, dynamic> body) async {
+    final r = await http.post(
+      _u('/api/v1/hub/bots'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    );
+    _ensure(r);
+    return _jsonMap(r.body);
+  }
+
+  Future<Map<String, dynamic>> hubUpdateBot(String botId, Map<String, dynamic> body) async {
+    final r = await http.patch(
+      _u('/api/v1/hub/bots/$botId'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    );
+    _ensure(r);
+    return _jsonMap(r.body);
+  }
+
+  Future<Map<String, dynamic>> hubDeleteBot(String botId) async {
+    final r = await http.delete(_u('/api/v1/hub/bots/$botId'));
+    _ensure(r);
+    return _jsonMap(r.body);
+  }
+
+  Future<Map<String, dynamic>> hubStartBot(String botId, {String? masterPassword}) async {
+    final r = await http.post(
+      _u('/api/v1/hub/bots/$botId/start'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'master_password': masterPassword}),
+    );
+    _ensure(r);
+    return _jsonMap(r.body);
+  }
+
+  Future<Map<String, dynamic>> hubStopBot(String botId) async {
+    final r = await http.post(_u('/api/v1/hub/bots/$botId/stop'));
+    _ensure(r);
+    return _jsonMap(r.body);
+  }
+
+  Future<Map<String, dynamic>> hubRunOnce(String botId, {String? masterPassword}) async {
+    final r = await http.post(
+      _u('/api/v1/hub/bots/$botId/run_once'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'master_password': masterPassword}),
+    );
+    _ensure(r);
+    return _jsonMap(r.body);
+  }
+
+  Future<Map<String, dynamic>> hubLogs(String botId, {int limit = 120}) async {
+    final r = await http.get(_u('/api/v1/hub/bots/$botId/logs?limit=$limit'));
+    _ensure(r);
+    return _jsonMap(r.body);
+  }
+
   void _ensure(http.Response r) {
     if (r.statusCode >= 200 && r.statusCode < 300) return;
     final body = r.body.isNotEmpty ? r.body : 'HTTP ${r.statusCode}';

@@ -97,3 +97,58 @@ class TimeSyncOut(BaseModel):
     local_time_ms: int
     server_time_ms: int
     offset_ms: int
+
+
+class HubBotCreateBody(BaseModel):
+    bot_id: Optional[str] = None
+    tag: str = Field(default="Dorothy", min_length=1, max_length=64)
+    symbol: str = Field(default="XRPUSDT", min_length=5, max_length=32)
+    loop_interval_sec: int = Field(default=450, ge=1, le=86400)
+    quote_order_qty: str = Field(default="8")
+    profit_factor: str = Field(default="0.05")
+    margin_drop_factor: str = Field(default="0.004")
+    qty_decimals: int = Field(default=8, ge=0, le=18)
+    price_decimals: int = Field(default=4, ge=0, le=18)
+    simulated: bool = True
+    trading_enabled: bool = False
+
+
+class HubBotUpdateBody(BaseModel):
+    tag: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    symbol: Optional[str] = Field(default=None, min_length=5, max_length=32)
+    loop_interval_sec: Optional[int] = Field(default=None, ge=1, le=86400)
+    quote_order_qty: Optional[str] = None
+    profit_factor: Optional[str] = None
+    margin_drop_factor: Optional[str] = None
+    qty_decimals: Optional[int] = Field(default=None, ge=0, le=18)
+    price_decimals: Optional[int] = Field(default=None, ge=0, le=18)
+    simulated: Optional[bool] = None
+    trading_enabled: Optional[bool] = None
+
+
+class HubBotOut(BaseModel):
+    bot_id: str
+    tag: str
+    created_at: str
+    running: bool
+    preset_id: str
+    symbol: str
+    simulated: bool
+    trading_enabled: bool
+    loop_interval_sec: int
+    quote_order_qty: str
+    profit_factor: str
+    margin_drop_factor: str
+    qty_decimals: int
+    price_decimals: int
+    last_cycle_ts: Optional[str]
+    last_error: Optional[str]
+    last_report: dict[str, Any]
+
+
+class HubBotsOut(BaseModel):
+    bots: list[HubBotOut]
+
+
+class HubBotLogsOut(BaseModel):
+    logs: list[dict[str, Any]]

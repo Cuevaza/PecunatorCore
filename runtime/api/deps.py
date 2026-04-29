@@ -15,6 +15,7 @@ def init_context() -> AppContext:
     global _ctx
     if _ctx is None:
         _ctx = build_context()
+        _bot.attach_data_dir(_ctx.config.data_dir)
     return _ctx
 
 

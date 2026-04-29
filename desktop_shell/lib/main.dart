@@ -36,6 +36,7 @@ class _BotControlPageState extends State<BotControlPage> {
   static const _engineBase = 'http://127.0.0.1:8765';
 
   final _masterCtrl = TextEditingController();
+  final _tagCtrl = TextEditingController(text: 'Dorothy XRP');
   final _symbolCtrl = TextEditingController(text: 'XRPUSDT');
   final _loopCtrl = TextEditingController(text: '450');
   final _quoteCtrl = TextEditingController(text: '8');
@@ -56,6 +57,9 @@ class _BotControlPageState extends State<BotControlPage> {
   String _gatewayStatus = '-';
   String _lastError = '-';
   String _terminalOut = '';
+  String _selectedBotId = '';
+  List<Map<String, dynamic>> _hubBots = <Map<String, dynamic>>[];
+  String _hubLogs = '-';
 
   EngineApi get _api => EngineApi(_engineBase);
 
@@ -68,6 +72,7 @@ class _BotControlPageState extends State<BotControlPage> {
   @override
   void dispose() {
     _masterCtrl.dispose();
+    _tagCtrl.dispose();
     _symbolCtrl.dispose();
     _loopCtrl.dispose();
     _quoteCtrl.dispose();
@@ -101,24 +106,39 @@ class _BotControlPageState extends State<BotControlPage> {
     await _withBusy(() async {
       final h = await _api.health();
       final v = await _api.vaultStatus();
-      final b = await _api.botStatus();
       final g = await _api.gatewaySnapshot();
+      final hub = await _api.hubBots();
+      final botsRaw = (hub['bots'] as List?) ?? const [];
+      _hubBots = botsRaw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      if (_hubBots.isNotEmpty) {
+        final hasSelected = _hubBots.any((b) => (b['bot_id'] ?? '').toString() == _selectedBotId);
+        if (!hasSelected) {
+          _selectedBotId = (_hubBots.first['bot_id'] ?? '').toString();
+        }
+      } else {
+        _selectedBotId = '';
+      }
+      final selected = _hubBots.where((b) => (b['bot_id'] ?? '').toString() == _selectedBotId).toList();
+      final b = selected.isNotEmpty ? selected.first : <String, dynamic>{};
 
       _health = jsonEncode(h);
       _vaultStatus = jsonEncode(v);
       _botStatus = jsonEncode(b);
       _gatewayStatus = jsonEncode(g);
 
-      final cfg = await _api.botConfig();
-      _symbolCtrl.text = (cfg['symbol'] ?? 'XRPUSDT').toString();
-      _loopCtrl.text = (cfg['loop_interval_sec'] ?? 450).toString();
-      _quoteCtrl.text = (cfg['quote_order_qty'] ?? '8').toString();
-      _profitCtrl.text = (cfg['profit_factor'] ?? '0.05').toString();
-      _dropCtrl.text = (cfg['margin_drop_factor'] ?? '0.004').toString();
-      _qtyDecCtrl.text = (cfg['qty_decimals'] ?? 8).toString();
-      _priceDecCtrl.text = (cfg['price_decimals'] ?? 4).toString();
-      _simulated = (cfg['simulated'] ?? true) == true;
-      _tradingEnabled = (cfg['trading_enabled'] ?? false) == true;
+      if (b.isNotEmpty) {
+        _tagCtrl.text = (b['tag'] ?? 'Dorothy').toString();
+        _symbolCtrl.text = (b['symbol'] ?? 'XRPUSDT').toString();
+        _loopCtrl.text = (b['loop_interval_sec'] ?? 450).toString();
+        _quoteCtrl.text = (b['quote_order_qty'] ?? '8').toString();
+        _profitCtrl.text = (b['profit_factor'] ?? '0.05').toString();
+        _dropCtrl.text = (b['margin_drop_factor'] ?? '0.004').toString();
+        _qtyDecCtrl.text = (b['qty_decimals'] ?? 8).toString();
+        _priceDecCtrl.text = (b['price_decimals'] ?? 4).toString();
+        _simulated = (b['simulated'] ?? true) == true;
+        _tradingEnabled = (b['trading_enabled'] ?? false) == true;
+      }
+      await _refreshHubLogs();
     });
   }
 
@@ -154,8 +174,10 @@ class _BotControlPageState extends State<BotControlPage> {
   }
 
   Future<void> _saveBotConfig() async {
+    if (_selectedBotId.isEmpty) return;
     await _withBusy(() async {
-      await _api.setBotConfig({
+      await _api.hubUpdateBot(_selectedBotId, {
+        'tag': _tagCtrl.text.trim(),
         'symbol': _symbolCtrl.text.trim(),
         'loop_interval_sec': int.tryParse(_loopCtrl.text.trim()) ?? 450,
         'quote_order_qty': _quoteCtrl.text.trim(),
@@ -166,6 +188,25 @@ class _BotControlPageState extends State<BotControlPage> {
         'simulated': _simulated,
         'trading_enabled': _tradingEnabled,
       });
+      await _refreshAll();
+    });
+  }
+
+  Future<void> _createBot() async {
+    await _withBusy(() async {
+      final created = await _api.hubCreateBot({
+        'tag': _tagCtrl.text.trim().isEmpty ? 'Dorothy' : _tagCtrl.text.trim(),
+        'symbol': _symbolCtrl.text.trim(),
+        'loop_interval_sec': int.tryParse(_loopCtrl.text.trim()) ?? 450,
+        'quote_order_qty': _quoteCtrl.text.trim(),
+        'profit_factor': _profitCtrl.text.trim(),
+        'margin_drop_factor': _dropCtrl.text.trim(),
+        'qty_decimals': int.tryParse(_qtyDecCtrl.text.trim()) ?? 8,
+        'price_decimals': int.tryParse(_priceDecCtrl.text.trim()) ?? 4,
+        'simulated': _simulated,
+        'trading_enabled': _tradingEnabled,
+      });
+      _selectedBotId = (created['bot_id'] ?? '').toString();
       await _refreshAll();
     });
   }
@@ -199,8 +240,10 @@ class _BotControlPageState extends State<BotControlPage> {
   }
 
   Future<void> _startBot() async {
+    if (_selectedBotId.isEmpty) return;
     await _withBusy(() async {
-      await _api.botStart(
+      await _api.hubStartBot(
+        _selectedBotId,
         masterPassword: _masterCtrl.text.trim().isEmpty ? null : _masterCtrl.text.trim(),
       );
       await _refreshAll();
@@ -208,19 +251,39 @@ class _BotControlPageState extends State<BotControlPage> {
   }
 
   Future<void> _stopBot() async {
+    if (_selectedBotId.isEmpty) return;
     await _withBusy(() async {
-      await _api.botStop();
+      await _api.hubStopBot(_selectedBotId);
       await _refreshAll();
     });
   }
 
   Future<void> _runOnce() async {
+    if (_selectedBotId.isEmpty) return;
     await _withBusy(() async {
-      await _api.botRunOnce(
+      await _api.hubRunOnce(
+        _selectedBotId,
         masterPassword: _masterCtrl.text.trim().isEmpty ? null : _masterCtrl.text.trim(),
       );
       await _refreshAll();
     });
+  }
+
+  Future<void> _deleteBot() async {
+    if (_selectedBotId.isEmpty) return;
+    await _withBusy(() async {
+      await _api.hubDeleteBot(_selectedBotId);
+      await _refreshAll();
+    });
+  }
+
+  Future<void> _refreshHubLogs() async {
+    if (_selectedBotId.isEmpty) {
+      _hubLogs = '-';
+      return;
+    }
+    final logs = await _api.hubLogs(_selectedBotId, limit: 120);
+    _hubLogs = jsonEncode(logs);
   }
 
   Widget _kv(String title, String body) {
@@ -246,7 +309,7 @@ class _BotControlPageState extends State<BotControlPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Pecunator Desktop · Bot preset B'),
+        title: const Text('PecunatorCore · Dorothy Hub'),
         actions: [
           IconButton(
             onPressed: _loading ? null : _refreshAll,
@@ -262,6 +325,91 @@ class _BotControlPageState extends State<BotControlPage> {
             const Text(
               'Engine connection is local/internal and fixed. No browser dashboard, no URL input in UI.',
               style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Dorothy Hub', style: TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: InputDecorator(
+                            decoration: const InputDecoration(
+                              labelText: 'Instancia activa',
+                              border: OutlineInputBorder(),
+                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                isExpanded: true,
+                                value: _selectedBotId.isEmpty ? null : _selectedBotId,
+                                items: _hubBots
+                                    .map(
+                                      (b) => DropdownMenuItem<String>(
+                                        value: (b['bot_id'] ?? '').toString(),
+                                        child: Text(
+                                          '${(b['tag'] ?? '-')} · ${(b['symbol'] ?? '-')} · ${(b['running'] == true ? 'RUNNING' : 'STOPPED')}',
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                                onChanged: _loading
+                                    ? null
+                                    : (v) async {
+                                        setState(() => _selectedBotId = v ?? '');
+                                        await _refreshAll();
+                                      },
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 260,
+                          child: TextField(
+                            controller: _tagCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Tag descriptivo',
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: _loading ? null : _createBot,
+                          child: const Text('Crear Dorothy'),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton(
+                          onPressed: _loading || _selectedBotId.isEmpty ? null : _deleteBot,
+                          child: const Text('Eliminar'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      width: double.infinity,
+                      constraints: const BoxConstraints(minHeight: 90, maxHeight: 180),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white24),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: SingleChildScrollView(
+                        child: SelectableText(
+                          _hubLogs,
+                          style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
             const SizedBox(height: 12),
             Row(

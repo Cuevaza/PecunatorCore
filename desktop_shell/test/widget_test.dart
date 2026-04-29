@@ -14,7 +14,7 @@ void main() {
     await tester.pumpWidget(const PecunatorDesktopApp());
     await tester.pumpAndSettle();
 
-    expect(find.text('Pecunator Desktop · Bot preset B'), findsOneWidget);
+    expect(find.text('PecunatorCore · Dorothy Hub'), findsOneWidget);
     expect(find.text('Sync timestamp'), findsOneWidget);
   });
 }

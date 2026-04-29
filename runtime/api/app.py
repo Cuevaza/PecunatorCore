@@ -19,6 +19,11 @@ from runtime.api.schemas import (
     BotStatusOut,
     GatewaySnapshotOut,
     GatewayStartBody,
+    HubBotCreateBody,
+    HubBotLogsOut,
+    HubBotOut,
+    HubBotsOut,
+    HubBotUpdateBody,
     TerminalExecBody,
     TerminalExecOut,
     TimeSyncBody,
@@ -61,7 +66,7 @@ async def _lifespan(app: FastAPI):
     yield
     ctx = deps.peek_ctx()
     bot = deps.get_bot()
-    await bot.runner.stop()
+    await bot.stop_all()
     if ctx and ctx.gateway:
         try:
             await ctx.gateway.stop()
@@ -149,6 +154,113 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/bot/status", response_model=BotStatusOut)
     async def bot_status() -> Any:
         return BotStatusOut(**deps.get_bot().status_payload())
+
+    @app.get("/api/v1/hub/bots", response_model=HubBotsOut)
+    async def hub_bots_list() -> Any:
+        return HubBotsOut(bots=[HubBotOut(**row) for row in deps.get_bot().list_instances()])
+
+    @app.post("/api/v1/hub/bots", response_model=HubBotOut)
+    async def hub_bots_create(body: HubBotCreateBody) -> Any:
+        svc = deps.get_bot()
+        try:
+            row = svc.create_instance(
+                bot_id=body.bot_id,
+                tag=body.tag,
+                symbol=body.symbol,
+                loop_interval_sec=body.loop_interval_sec,
+                quote_order_qty=body.quote_order_qty,
+                profit_factor=body.profit_factor,
+                margin_drop_factor=body.margin_drop_factor,
+                qty_decimals=body.qty_decimals,
+                price_decimals=body.price_decimals,
+                simulated=body.simulated,
+                trading_enabled=body.trading_enabled,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=sanitize_log_message(str(e))) from None
+        return HubBotOut(**row)
+
+    @app.patch("/api/v1/hub/bots/{bot_id}", response_model=HubBotOut)
+    async def hub_bots_update(bot_id: str, body: HubBotUpdateBody) -> Any:
+        svc = deps.get_bot()
+        try:
+            row = svc.update_instance(
+                bot_id,
+                tag=body.tag,
+                symbol=body.symbol,
+                loop_interval_sec=body.loop_interval_sec,
+                quote_order_qty=body.quote_order_qty,
+                profit_factor=body.profit_factor,
+                margin_drop_factor=body.margin_drop_factor,
+                qty_decimals=body.qty_decimals,
+                price_decimals=body.price_decimals,
+                simulated=body.simulated,
+                trading_enabled=body.trading_enabled,
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Bot not found") from None
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=sanitize_log_message(str(e))) from None
+        return HubBotOut(**row)
+
+    @app.delete("/api/v1/hub/bots/{bot_id}")
+    async def hub_bots_delete(bot_id: str) -> dict[str, bool]:
+        svc = deps.get_bot()
+        try:
+            await svc.delete_instance(bot_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Bot not found") from None
+        return {"deleted": True}
+
+    @app.post("/api/v1/hub/bots/{bot_id}/start", response_model=HubBotOut)
+    async def hub_bots_start(
+        bot_id: str,
+        body: GatewayStartBody = GatewayStartBody(),
+        ctx: AppContext = Depends(deps.get_ctx),
+    ) -> Any:
+        pair = _resolve_pair(ctx, body.master_password)
+        if not pair:
+            raise HTTPException(status_code=400, detail="No API credentials available")
+        try:
+            row = await deps.get_bot().start_instance(bot_id, pair[0], pair[1])
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Bot not found") from None
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=sanitize_log_message(str(e))) from None
+        return HubBotOut(**row)
+
+    @app.post("/api/v1/hub/bots/{bot_id}/stop", response_model=HubBotOut)
+    async def hub_bots_stop(bot_id: str) -> Any:
+        try:
+            row = await deps.get_bot().stop_instance(bot_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Bot not found") from None
+        return HubBotOut(**row)
+
+    @app.post("/api/v1/hub/bots/{bot_id}/run_once", response_model=HubBotOut)
+    async def hub_bots_run_once(
+        bot_id: str,
+        body: GatewayStartBody = GatewayStartBody(),
+        ctx: AppContext = Depends(deps.get_ctx),
+    ) -> Any:
+        pair = _resolve_pair(ctx, body.master_password)
+        if not pair:
+            raise HTTPException(status_code=400, detail="No API credentials available")
+        try:
+            row = await deps.get_bot().run_once_instance(bot_id, pair[0], pair[1])
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Bot not found") from None
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=sanitize_log_message(str(e))) from None
+        return HubBotOut(**row)
+
+    @app.get("/api/v1/hub/bots/{bot_id}/logs", response_model=HubBotLogsOut)
+    async def hub_bots_logs(bot_id: str, limit: int = 200) -> Any:
+        try:
+            rows = deps.get_bot().get_logs(bot_id, limit=limit)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Bot not found") from None
+        return HubBotLogsOut(logs=rows)
 
     @app.post("/api/v1/terminal/execute", response_model=TerminalExecOut)
     async def terminal_execute(
