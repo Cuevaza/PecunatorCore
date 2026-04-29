@@ -5,6 +5,20 @@ import 'package:flutter/material.dart';
 
 import 'api_client.dart';
 
+String _plainNum(dynamic value, {int maxDecimals = 12}) {
+  if (value == null) return '0';
+  final raw = value.toString().trim();
+  if (raw.isEmpty) return '0';
+  final n = num.tryParse(raw);
+  if (n == null || n.isNaN || n.isInfinite) return raw;
+  if (n == 0) return '0';
+  if (n is int) return n.toString();
+  var out = n.toStringAsFixed(maxDecimals);
+  out = out.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+  if (out == '-0') return '0';
+  return out;
+}
+
 void main() {
   runApp(const PecunatorDesktopApp());
 }
@@ -1239,17 +1253,17 @@ class _BotControlPageState extends State<BotControlPage> {
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          'qty ${(b['quote_order_qty'] ?? '-')}',
+                          'qty ${_plainNum(b['quote_order_qty'])}',
                           style: const TextStyle(fontSize: 12),
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          'p ${(b['profit_factor'] ?? '-')}',
+                          'p ${_plainNum(b['profit_factor'])}',
                           style: const TextStyle(fontSize: 12),
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          'd ${(b['margin_drop_factor'] ?? '-')}',
+                          'd ${_plainNum(b['margin_drop_factor'])}',
                           style: const TextStyle(fontSize: 12),
                         ),
                         const SizedBox(width: 8),
@@ -1665,8 +1679,8 @@ class _SpotAccountPageState extends State<SpotAccountPage> {
                           Expanded(
                             child: Text(
                               secondary == null
-                                  ? '$primaryKey $primary'
-                                  : '$primaryKey $primary · $secondaryKey $secondary',
+                                  ? '$primaryKey ${_plainNum(primary)}'
+                                  : '$primaryKey ${_plainNum(primary)} · $secondaryKey ${_plainNum(secondary)}',
                               style: const TextStyle(
                                 fontFamily: 'monospace',
                                 fontSize: 11,
@@ -1705,10 +1719,10 @@ class _SpotAccountPageState extends State<SpotAccountPage> {
         padding: const EdgeInsets.all(10),
         child: Row(
           children: [
-            _kpi('$base Spot', pick(_spot, 'total')),
-            _kpi('$base Futures', pick(_futures, 'total')),
-            _kpi('LD$base Earn', pick(_earn, 'total', withLd: true)),
-            _kpi('$base Ext', pick(_external, 'total')),
+            _kpi('$base Spot', _plainNum(pick(_spot, 'total'))),
+            _kpi('$base Futures', _plainNum(pick(_futures, 'total'))),
+            _kpi('LD$base Earn', _plainNum(pick(_earn, 'total', withLd: true))),
+            _kpi('$base Ext', _plainNum(pick(_external, 'total'))),
           ],
         ),
       ),

@@ -73,6 +73,7 @@ async def _lifespan(app: FastAPI):
         if remembered:
             ctx.cached_master_password = remembered
             _LOG.info("Cached master password loaded from device remember store")
+    await _autostart_gateway_if_possible(ctx)
     yield
     ctx = deps.peek_ctx()
     bot = deps.get_bot()
@@ -83,6 +84,36 @@ async def _lifespan(app: FastAPI):
         except Exception as e:
             _LOG.warning("gateway stop on shutdown: %s", e)
         ctx.gateway = None
+
+
+async def _autostart_gateway_if_possible(ctx: AppContext) -> None:
+    if ctx.gateway is not None:
+        return
+    try:
+        pair = _resolve_pair(ctx, None)
+    except HTTPException:
+        pair = None
+    except Exception as e:
+        _LOG.warning("Gateway auto-start resolve skipped: %s", sanitize_log_message(str(e)))
+        pair = None
+    if not pair:
+        _LOG.info("Gateway auto-start skipped: no credentials resolved")
+        return
+    gw = BinanceGateway(pair[0], pair[1], ctx.bus, ctx.state, ctx.log_line)
+    try:
+        await gw.start()
+        await gw.sync_time()
+        await gw.fetch_account()
+        ctx.gateway = gw
+        ctx.state.last_error = None
+        _LOG.info("Gateway auto-started on API startup")
+    except Exception as e:
+        try:
+            await gw.stop()
+        except Exception:
+            pass
+        ctx.state.last_error = sanitize_log_message(str(e))
+        _LOG.warning("Gateway auto-start failed: %s", ctx.state.last_error)
 
 
 def create_app() -> FastAPI:
@@ -537,7 +568,13 @@ def _snapshot(ctx: AppContext) -> GatewaySnapshotOut:
 
 def _to_decimal_str(value: Any) -> str:
     try:
-        return str(Decimal(str(value or "0")))
+        dec = Decimal(str(value or "0"))
+        text = format(dec, "f")
+        if "." in text:
+            text = text.rstrip("0").rstrip(".")
+        if text in ("", "-0"):
+            return "0"
+        return text
     except (InvalidOperation, ValueError, TypeError):
         return "0"
 
